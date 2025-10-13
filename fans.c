@@ -46,7 +46,7 @@ static const char *signal_names[] = {
     "Laser Pilot",
     "Laser Shutter",
     "Laser Threshold",
-    "PowderSelect"
+    "Powder Select"
 };
 
 typedef enum {
@@ -69,15 +69,15 @@ typedef enum {
 
 static uint32_t n_signals = 0, signals_on = 0;
 static user_mcode_ptrs_t user_mcode;
+static ldm_settings_t ldm_setting, signals;
+static io_port_cfg_t d_out;
+static nvs_address_t nvs_address;
+
 static on_report_options_ptr on_report_options;
 static on_realtime_report_ptr on_realtime_report;
 static on_program_completed_ptr on_program_completed;
 static on_unknown_accessory_override_ptr on_unknown_accessory_override;
 static driver_reset_ptr driver_reset;
-static ldm_settings_t ldm_setting, signals;
-static uint8_t n_ports;
-static char max_port[4] = "0";
-static nvs_address_t nvs_address;
 
 bool ldm_get_state (uint8_t signal);
 void ldm_set_state (uint8_t signal, bool on);
@@ -225,7 +225,7 @@ void ldm_set_state (uint8_t signal, bool on)
 }
 
 
-static void fan_setup (void)
+static void ldm_setup (void)
 {
     memcpy(&user_mcode, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
 
@@ -248,100 +248,27 @@ static void fan_setup (void)
 
 static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t offset)
 {
-    bool available = false;
-
-    switch(setting->id) {
-
-        case Setting_FanPort0:
-            available = n_ports >= 1;
-            break;
-
-        case Setting_FanPort1:
-            available = n_ports >= 2;
-            break;
-
-        case Setting_FanPort2:
-            available = n_ports >= 3;
-            break;
-
-        case Setting_FanPort3:
-            available = n_ports >= 4;
-            break;
-
-        default:
-            break;
-    }
-
-    return available;
+    return d_out.n_ports >= setting->id - Setting_FanPort0;
 }
 
 static status_code_t set_float (setting_id_t setting, float value)
 {
-    status_code_t status;
-
-    if((status = isintf(value) ? Status_OK : Status_BadNumberFormat) == Status_OK)
-      switch(setting) {
-
-        case Setting_FanPort0:
-            ldm_setting.port[0] = value < 0.0f ? IOPORT_UNASSIGNED : (uint8_t)value;
-            break;
-
-        case Setting_FanPort1:
-            ldm_setting.port[1] = value < 0.0f ? IOPORT_UNASSIGNED : (uint8_t)value;
-            break;
-
-        case Setting_FanPort2:
-            ldm_setting.port[2] = value < 0.0f ? IOPORT_UNASSIGNED : (uint8_t)value;
-            break;
-
-        case Setting_FanPort3:
-            ldm_setting.port[3] = value < 0.0f ? IOPORT_UNASSIGNED : (uint8_t)value;
-            break;
-
-        default:
-            break;
-    }
-
-    return status;
+    return d_out.set_value(&d_out, &ldm_setting.port[setting - Setting_FanPort0], (pin_cap_t){}, value);
 }
 
 static float get_float (setting_id_t setting)
 {
-    float value = 0.0f;
-
-    switch(setting) {
-
-        case Setting_FanPort0:
-            value = ldm_setting.port[0] > n_ports ? -1.0f : (float)ldm_setting.port[0];
-            break;
-
-        case Setting_FanPort1:
-            value = ldm_setting.port[1] > n_ports ? -1.0f : (float)ldm_setting.port[1];
-            break;
-
-        case Setting_FanPort2:
-            value = ldm_setting.port[2] > n_ports ? -1.0f : (float)ldm_setting.port[2];
-            break;
-
-        case Setting_FanPort3:
-            value = ldm_setting.port[3] > n_ports ? -1.0f : (float)ldm_setting.port[3];
-            break;
-
-        default:
-            break;
-    }
-
-    return value;
+    return d_out.get_value(&d_out, ldm_setting.port[setting - Setting_FanPort0]);
 }
 
-static const setting_detail_t fan_settings[] = {
-    { Setting_FanPort0, Group_AuxPorts, "Laser Pilot port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_FanPort1, Group_AuxPorts, "Laser Shutter port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_FanPort2, Group_AuxPorts, "Laser Threshold port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_FanPort3, Group_AuxPorts, "Powder Select port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+static const setting_detail_t ldm_settings[] = {
+    { Setting_FanPort0, Group_AuxPorts, "Laser Pilot port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_FanPort1, Group_AuxPorts, "Laser Shutter port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_FanPort2, Group_AuxPorts, "Laser Threshold port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_FanPort3, Group_AuxPorts, "Powder Select port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
 };
 
-static const setting_descr_t fan_settings_descr[] = {
+static const setting_descr_t ldm_settings_descr[] = {
     { Setting_FanPort0, "Aux output port number to use for laser pilot control. Set to -1 to disable." },
     { Setting_FanPort1, "Aux output port number to use for laser shutter control. Set to -1 to disable." },
     { Setting_FanPort2, "Aux output port number to use for laser threshold control. Set to -1 to disable." },
@@ -358,20 +285,12 @@ static void ldm_settings_save (void)
 // Default is highest numbered free port.
 static void ldm_settings_restore (void)
 {
+    uint32_t idx = SIGNALS;
 
-    if(n_ports) {
-
-        uint32_t idx = SIGNALS;
-        uint8_t base_port = n_ports;
-
-        do {
-            idx--;
-            if((ldm_setting.port[idx] = ioport_find_free(Port_Digital, Port_Output, (pin_cap_t){ .claimable = On }, signal_names[idx])) == IOPORT_UNASSIGNED) {
-                if((ldm_setting.port[idx] = base_port))
-                    base_port--;
-            }
-        } while(idx);
-    }
+    do {
+        idx--;
+        ldm_setting.port[idx] = d_out.get_next(&d_out, idx == SIGNALS - 1 ? IOPORT_UNASSIGNED : ldm_setting.port[idx + 1], signal_names[idx], (pin_cap_t){});
+    } while(idx);
 
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&ldm_setting, sizeof(ldm_settings_t), true);
 }
@@ -379,32 +298,25 @@ static void ldm_settings_restore (void)
 static void ldm_settings_load (void)
 {
     uint_fast8_t failed = 0;
+    uint_fast8_t idx = SIGNALS;
 
     if(hal.nvs.memcpy_from_nvs((uint8_t *)&ldm_setting, nvs_address, sizeof(ldm_settings_t), true) != NVS_TransferResult_OK)
         ldm_settings_restore();
 
-    if(n_ports)  {
+    do {
+        if(--idx != 0) {
 
-        uint_fast8_t idx = SIGNALS;
-
-
-        do {
-            idx--;
-            // Sanity check
-            if(ldm_setting.port[idx] > n_ports)
-                ldm_setting.port[idx] = IOPORT_UNASSIGNED;
-
-            if((signals.port[idx] = ldm_setting.port[idx]) != IOPORT_UNASSIGNED && ioport_claim(Port_Digital, Port_Output, &signals.port[idx], signal_names[idx]))
+            if((signals.port[idx] = ldm_setting.port[idx]) != IOPORT_UNASSIGNED && d_out.claim(&d_out, &signals.port[idx], signal_names[idx], (pin_cap_t){}))
                 n_signals++;
             else {
                 failed++;
                 signals.port[idx] = IOPORT_UNASSIGNED;
             }
-        } while(idx);
-    }
-
+        }
+    } while(idx);
+  
     if(n_signals)
-        fan_setup();
+        ldm_setup();
 
     if(failed)
         task_run_on_startup(report_warning, "LDM plugin: configured port number(s) not available");
@@ -415,7 +327,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt) {
-        report_plugin("LDM-Fans", "0.01");
+        report_plugin("LDM-Fans", "0.02");
         hal.stream.write("[LDM:");
         hal.stream.write(uitoa(n_signals));
         hal.stream.write("]" ASCII_EOL);
@@ -425,23 +337,18 @@ static void onReportOptions (bool newopt)
 void fans_init (void)
 {
     static setting_details_t setting_details = {
-        .settings = fan_settings,
-        .n_settings = sizeof(fan_settings) / sizeof(setting_detail_t),
-        .descriptions = fan_settings_descr,
-        .n_descriptions = sizeof(fan_settings_descr) / sizeof(setting_descr_t),
+        .settings = ldm_settings,
+        .n_settings = sizeof(ldm_settings) / sizeof(setting_detail_t),
+        .descriptions = ldm_settings_descr,
+        .n_descriptions = sizeof(ldm_settings_descr) / sizeof(setting_descr_t),
         .save = ldm_settings_save,
         .load = ldm_settings_load,
         .restore = ldm_settings_restore
     };
 
-    if(ioport_can_claim_explicit() &&
-        ioports_available(Port_Digital, Port_Output) &&
-         (nvs_address = nvs_alloc(sizeof(ldm_settings_t)))) {
+    if(ioports_cfg(&d_out, Port_Digital, Port_Output)->n_ports && (nvs_address = nvs_alloc(sizeof(ldm_settings_t)))) {
 
         settings_register(&setting_details);
-
-        n_ports = ioport_find_free(Port_Digital, Port_Output, (pin_cap_t){ .claimable = On }, NULL);
-        strcpy(max_port, uitoa(n_ports));
 
         on_report_options = grbl.on_report_options;
         grbl.on_report_options = onReportOptions;
@@ -450,4 +357,4 @@ void fans_init (void)
         task_run_on_startup(report_warning, "LDM plugin failed to initialize!");
 }
 
-#endif
+#endif //FANS_ENABLE
