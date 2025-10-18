@@ -30,7 +30,8 @@
 // #endif
 
 #define SIGNALS 5
-#define CMD_OVERRIDE_FAN1_TOGGLE            0x98 //!< Toggle Fan 1 on/off
+#define CMD_PILOT_TOGGLE            0xBA //!< Realtime command to toggle Pilot on/off
+#define CMD_SHUTTER_TOGGLE          0xBB //!< Realtime command to toggle Shutter on/off
 
 #include <string.h>
 #include <math.h>
@@ -207,11 +208,11 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
 
 static bool onRealtimeCmd (char c)
 {
-    if(c == CMD_OVERRIDE_FAN0_TOGGLE && signals.port[LaserPilot] != 0xFF) {
+    if(c == CMD_PILOT_TOGGLE && signals.port[LaserPilot] != 0xFF) {
         ldm_set_state(LaserPilot, !ldm_get_state(LaserPilot));
         return true;
     }
-    else if(c == CMD_OVERRIDE_FAN1_TOGGLE && signals.port[LaserShutter] != 0xFF) {//0x98 mapped to FAN1_TOGGLE IN CUSTOM IOSENDER BUILD
+    else if(c == CMD_SHUTTER_TOGGLE && signals.port[LaserShutter] != 0xFF) {
         ldm_set_state(LaserShutter, !ldm_get_state(LaserShutter));
         return true;
     }
