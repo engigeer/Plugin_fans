@@ -29,7 +29,8 @@
 // #error "FANS PLUGIN CANNOT BE ENABLED WITH CUSTOM LDM PLUGIN"
 // #endif
 
-#define SIGNALS 4
+#define SIGNALS 5
+#define CMD_OVERRIDE_FAN1_TOGGLE            0x98 //!< Toggle Fan 1 on/off
 
 #include <string.h>
 #include <math.h>
@@ -39,13 +40,14 @@
 #include "grbl/nvs_buffer.h"
 
 typedef struct {
-    uint8_t port[4];
+    uint8_t port[5];
 } ldm_settings_t;
 
 static const char *signal_names[] = {
     "Laser Pilot",
     "Laser Shutter",
     "Laser Threshold",
+    "Laser Error Reset"
     "Powder Select"
 };
 
@@ -53,7 +55,8 @@ typedef enum {
     LaserPilot = 0,
     LaserShutter = 1,
     LaserThreshold = 2,
-    PowderSelect = 3
+    LaserErrorReset = 3,
+    PowderSelect = 4
 } ldm_signals_t;
 
 typedef enum {
@@ -63,6 +66,7 @@ typedef enum {
     LaserShutter_Off = 513,
     LaserThreshold_On = 514,
     LaserThreshold_Off = 515,
+    LaserErrorReset_Mom = 516,
     PowderSelectHopper1 = 520,
     PowderSelectHopper2 = 522
 } ldm_mcode_t;
@@ -76,7 +80,7 @@ static nvs_address_t nvs_address;
 static on_report_options_ptr on_report_options;
 static on_realtime_report_ptr on_realtime_report;
 static on_program_completed_ptr on_program_completed;
-static on_unknown_accessory_override_ptr on_unknown_accessory_override;
+static on_unknown_realtime_cmd_ptr on_unknown_realtime_cmd;
 static driver_reset_ptr driver_reset;
 
 bool ldm_get_state (uint8_t signal);
@@ -87,6 +91,7 @@ static user_mcode_type_t userMCodeCheck (user_mcode_t mcode)
     return ((ldm_mcode_t) mcode == LaserPilot_On || (ldm_mcode_t) mcode == LaserPilot_Off ||
             (ldm_mcode_t) mcode == LaserShutter_On || (ldm_mcode_t) mcode == LaserShutter_Off ||
             (ldm_mcode_t) mcode == LaserThreshold_On || (ldm_mcode_t) mcode == LaserThreshold_Off ||
+            (ldm_mcode_t) mcode == LaserErrorReset_Mom ||
             (ldm_mcode_t) mcode == PowderSelectHopper1 || (ldm_mcode_t) mcode == PowderSelectHopper2
             )
                      ? UserMCode_Normal //  Handled by us. Set to UserMCode_NoValueWords if there are any parameter words (letters) without an accompanying value.
@@ -110,6 +115,8 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
         case LaserThreshold_On:
             break;
         case LaserThreshold_Off:
+            break;
+        case LaserErrorReset_Mom:
             break;
         case PowderSelectHopper1:
             break;
@@ -149,14 +156,16 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
         case LaserThreshold_Off:
             ldm_set_state(LaserThreshold, Off);
             break;
-        // case LaserErrorReset_On:
-        //     ldm_set_state(LaserReset, On);
-        //     break;
+        case LaserErrorReset_Mom:
+            ldm_set_state(LaserErrorReset, On);
+            delay_sec(0.5f, DelayMode_Dwell);
+            ldm_set_state(LaserErrorReset, Off);
+            break;
         case PowderSelectHopper1:
-            ldm_set_state(PowderSelect, On);
+            ldm_set_state(PowderSelect, Off); // BIT OFF = HOPPER 1
             break;
         case PowderSelectHopper2:
-            ldm_set_state(PowderSelect, Off);
+            ldm_set_state(PowderSelect, On); // BIT ON = HOPPER 2
             break;
 
         default:
@@ -196,12 +205,18 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
         on_realtime_report(stream_write, report);
 }
 
-static void onAccessoryOverride (uint8_t cmd)
+static bool onRealtimeCmd (char c)
 {
-    if(cmd == CMD_OVERRIDE_FAN0_TOGGLE && signals.port[0] != 0xFF)
-        ldm_set_state(0, !ldm_get_state(0));
-    else if(on_unknown_accessory_override)
-        on_unknown_accessory_override(cmd);
+    if(c == CMD_OVERRIDE_FAN0_TOGGLE && signals.port[LaserPilot] != 0xFF) {
+        ldm_set_state(LaserPilot, !ldm_get_state(LaserPilot));
+        return true;
+    }
+    else if(c == CMD_OVERRIDE_FAN1_TOGGLE && signals.port[LaserShutter] != 0xFF) {//0x98 mapped to FAN1_TOGGLE IN CUSTOM IOSENDER BUILD
+        ldm_set_state(LaserShutter, !ldm_get_state(LaserShutter));
+        return true;
+    }
+
+    return on_unknown_realtime_cmd == NULL || on_unknown_realtime_cmd(c);
 }
 
 bool ldm_get_state (uint8_t signal)
@@ -239,8 +254,8 @@ static void ldm_setup (void)
     on_realtime_report = grbl.on_realtime_report;
     grbl.on_realtime_report = onRealtimeReport;
 
-    on_unknown_accessory_override = grbl.on_unknown_accessory_override;
-    grbl.on_unknown_accessory_override = onAccessoryOverride;
+    on_unknown_realtime_cmd = grbl.on_unknown_realtime_cmd;
+    grbl.on_unknown_realtime_cmd = onRealtimeCmd;
 
     on_program_completed = grbl.on_program_completed;
     grbl.on_program_completed = onProgramCompleted;
@@ -248,31 +263,33 @@ static void ldm_setup (void)
 
 static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t offset)
 {
-    return d_out.n_ports >= setting->id - Setting_FanPort0;
+    return d_out.n_ports >= setting->id - Setting_UserDefined_0;
 }
 
 static status_code_t set_float (setting_id_t setting, float value)
 {
-    return d_out.set_value(&d_out, &ldm_setting.port[setting - Setting_FanPort0], (pin_cap_t){}, value);
+    return d_out.set_value(&d_out, &ldm_setting.port[setting - Setting_UserDefined_0], (pin_cap_t){}, value);
 }
 
 static float get_float (setting_id_t setting)
 {
-    return d_out.get_value(&d_out, ldm_setting.port[setting - Setting_FanPort0]);
+    return d_out.get_value(&d_out, ldm_setting.port[setting - Setting_UserDefined_0]);
 }
 
 static const setting_detail_t ldm_settings[] = {
-    { Setting_FanPort0, Group_AuxPorts, "Laser Pilot port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_FanPort1, Group_AuxPorts, "Laser Shutter port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_FanPort2, Group_AuxPorts, "Laser Threshold port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_FanPort3, Group_AuxPorts, "Powder Select port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_0, Group_AuxPorts, "Laser Pilot port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_1, Group_AuxPorts, "Laser Shutter port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_2, Group_AuxPorts, "Laser Threshold port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_3, Group_AuxPorts, "Laser error reset port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_4, Group_AuxPorts, "Powder Select port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
 };
 
 static const setting_descr_t ldm_settings_descr[] = {
-    { Setting_FanPort0, "Aux output port number to use for laser pilot control. Set to -1 to disable." },
-    { Setting_FanPort1, "Aux output port number to use for laser shutter control. Set to -1 to disable." },
-    { Setting_FanPort2, "Aux output port number to use for laser threshold control. Set to -1 to disable." },
-    { Setting_FanPort3, "Aux output port number to use for powder select control. Set to -1 to disable." },
+    { Setting_UserDefined_0, "Aux output port number to use for laser pilot control. Set to -1 to disable." },
+    { Setting_UserDefined_1, "Aux output port number to use for laser shutter control. Set to -1 to disable." },
+    { Setting_UserDefined_2, "Aux output port number to use for laser threshold control. Set to -1 to disable." },
+    { Setting_UserDefined_3, "Aux output port number to use for laser error reset. Set to -1 to disable." },
+    { Setting_UserDefined_4, "Aux output port number to use for powder select control. Set to -1 to disable." },
 };
 
 // Write settings to non volatile storage (NVS).
@@ -327,7 +344,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt) {
-        report_plugin("LDM-Fans", "0.02");
+        report_plugin("LDM-Fans", "0.03");
         hal.stream.write("[LDM:");
         hal.stream.write(uitoa(n_signals));
         hal.stream.write("]" ASCII_EOL);
