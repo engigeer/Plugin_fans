@@ -21,6 +21,13 @@
 
 */
 
+/*TODO
+- move all code to laser plugin
+- add realtime report of powder feed rate
+- add linearization of powder feed rate
+- add nulling out of powder feed rate on reset
+- consider how to toggle pilot / shutter in macros (or not necessary)
+*/
 #include "driver.h"
 
 #if FANS_ENABLE
@@ -42,13 +49,14 @@
 
 typedef struct {
     uint8_t port[5];
+    uint8_t powder_feedrate_port;
 } ldm_settings_t;
 
 static const char *signal_names[] = {
     "Laser Pilot",
     "Laser Shutter",
     "Laser Threshold",
-    "Laser Error Reset"
+    "Laser Error Reset",
     "Powder Select"
 };
 
@@ -69,13 +77,15 @@ typedef enum {
     LaserThreshold_Off = 515,
     LaserErrorReset_Mom = 516,
     PowderSelectHopper1 = 520,
-    PowderSelectHopper2 = 522
+    PowderSelectHopper2 = 522,
+    PowderFeedRate = 530
 } ldm_mcode_t;
 
+static uint8_t powder_feedrate_port;
 static uint32_t n_signals = 0, signals_on = 0;
 static user_mcode_ptrs_t user_mcode;
 static ldm_settings_t ldm_setting, signals;
-static io_port_cfg_t d_out;
+static io_port_cfg_t d_out, a_out;
 static nvs_address_t nvs_address;
 
 static on_report_options_ptr on_report_options;
@@ -86,13 +96,14 @@ static driver_reset_ptr driver_reset;
 
 bool ldm_get_state (uint8_t signal);
 void ldm_set_state (uint8_t signal, bool on);
+void set_powder_feedrate (float value);
 
 static user_mcode_type_t userMCodeCheck (user_mcode_t mcode)
 {
     return ((ldm_mcode_t) mcode == LaserPilot_On || (ldm_mcode_t) mcode == LaserPilot_Off ||
             (ldm_mcode_t) mcode == LaserShutter_On || (ldm_mcode_t) mcode == LaserShutter_Off ||
             (ldm_mcode_t) mcode == LaserThreshold_On || (ldm_mcode_t) mcode == LaserThreshold_Off ||
-            (ldm_mcode_t) mcode == LaserErrorReset_Mom ||
+            (ldm_mcode_t) mcode == LaserErrorReset_Mom || (ldm_mcode_t) PowderFeedRate ||
             (ldm_mcode_t) mcode == PowderSelectHopper1 || (ldm_mcode_t) mcode == PowderSelectHopper2
             )
                      ? UserMCode_Normal //  Handled by us. Set to UserMCode_NoValueWords if there are any parameter words (letters) without an accompanying value.
@@ -122,6 +133,15 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
         case PowderSelectHopper1:
             break;
         case PowderSelectHopper2:
+            break;
+        case PowderFeedRate:
+            if(gc_block->words.s) {
+                if(!isintf(gc_block->values.s))
+                    state = Status_BadNumberFormat;
+                else if(gc_block->values.s < -0.0f || gc_block->values.s > 15.0f)
+                    state = Status_GcodeValueOutOfRange;
+            }
+            gc_block->words.s = Off;
             break;
 
         default:
@@ -167,6 +187,10 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
             break;
         case PowderSelectHopper2:
             ldm_set_state(PowderSelect, On); // BIT ON = HOPPER 2
+            break;
+        case PowderFeedRate:
+            float value = (float)gc_block->values.s;
+            set_powder_feedrate(value);
             break;
 
         default:
@@ -240,6 +264,10 @@ void ldm_set_state (uint8_t signal, bool on)
     }
 }
 
+void set_powder_feedrate(float value)
+{
+    ioport_analog_out(powder_feedrate_port, value * 6.6f);
+}
 
 static void ldm_setup (void)
 {
@@ -264,17 +292,68 @@ static void ldm_setup (void)
 
 static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t offset)
 {
-    return d_out.n_ports >= setting->id - Setting_UserDefined_0;
+    switch(setting->id) {
+
+        case Setting_UserDefined_0:
+        case Setting_UserDefined_1:
+        case Setting_UserDefined_2:
+        case Setting_UserDefined_3:
+        case Setting_UserDefined_4:
+            return d_out.n_ports >= setting->id - Setting_UserDefined_0;
+
+        case Setting_UserDefined_5:
+            return a_out.n_ports > 0;
+
+        default: break;
+    }
+
+    return false;
 }
 
 static status_code_t set_float (setting_id_t setting, float value)
 {
-    return d_out.set_value(&d_out, &ldm_setting.port[setting - Setting_UserDefined_0], (pin_cap_t){}, value);
+    status_code_t status = Status_SettingDisabled;
+
+    switch(setting) {
+
+        case Setting_UserDefined_0:
+        case Setting_UserDefined_1:
+        case Setting_UserDefined_2:
+        case Setting_UserDefined_3:
+        case Setting_UserDefined_4:
+            status = d_out.set_value(&d_out, &ldm_setting.port[setting - Setting_UserDefined_0], (pin_cap_t){}, value);
+            break;
+
+        case Setting_UserDefined_5:
+            status = a_out.set_value(&a_out, &ldm_setting.powder_feedrate_port, (pin_cap_t){}, value);
+            break;
+
+        default: break;
+    }
 }
 
 static float get_float (setting_id_t setting)
 {
-    return d_out.get_value(&d_out, ldm_setting.port[setting - Setting_UserDefined_0]);
+    float value = -1.0f;
+
+    switch(setting) {
+
+        case Setting_UserDefined_0:
+        case Setting_UserDefined_1:
+        case Setting_UserDefined_2:
+        case Setting_UserDefined_3:
+        case Setting_UserDefined_4:
+            value = d_out.get_value(&d_out, ldm_setting.port[setting - Setting_UserDefined_0]);
+            break;
+
+        case Setting_UserDefined_5:
+            value = a_out.get_value(&a_out, ldm_setting.powder_feedrate_port);
+            break;
+
+        default: break;
+    }
+
+    return value;
 }
 
 static const setting_detail_t ldm_settings[] = {
@@ -283,6 +362,7 @@ static const setting_detail_t ldm_settings[] = {
     { Setting_UserDefined_2, Group_AuxPorts, "Laser Threshold port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_3, Group_AuxPorts, "Laser error reset port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_4, Group_AuxPorts, "Powder Select port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_5, Group_AuxPorts, "Powder Feedrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
 };
 
 static const setting_descr_t ldm_settings_descr[] = {
@@ -291,6 +371,7 @@ static const setting_descr_t ldm_settings_descr[] = {
     { Setting_UserDefined_2, "Aux output port number to use for laser threshold control. Set to -1 to disable." },
     { Setting_UserDefined_3, "Aux output port number to use for laser error reset. Set to -1 to disable." },
     { Setting_UserDefined_4, "Aux output port number to use for powder select control. Set to -1 to disable." },
+    { Setting_UserDefined_5, "Aux output port number to use for powder feedrate." },
 };
 
 // Write settings to non volatile storage (NVS).
@@ -315,14 +396,22 @@ static void ldm_settings_restore (void)
 
 static void ldm_settings_load (void)
 {
+    bool ok = false;
     uint_fast8_t failed = 0;
     uint_fast8_t idx = SIGNALS;
 
     if(hal.nvs.memcpy_from_nvs((uint8_t *)&ldm_setting, nvs_address, sizeof(ldm_settings_t), true) != NVS_TransferResult_OK)
         ldm_settings_restore();
 
+    powder_feedrate_port = ldm_setting.powder_feedrate_port;
+
+    if(powder_feedrate_port == IOPORT_UNASSIGNED || a_out.claim(&a_out, &powder_feedrate_port, "Powder feedrate", (pin_cap_t){}))
+        ok = true;
+    else
+        failed++;
+
     do {
-        if(--idx != 0) {
+        if(--idx >= 0) {
 
             if((signals.port[idx] = ldm_setting.port[idx]) != IOPORT_UNASSIGNED && d_out.claim(&d_out, &signals.port[idx], signal_names[idx], (pin_cap_t){}))
                 n_signals++;
@@ -333,7 +422,7 @@ static void ldm_settings_load (void)
         }
     } while(idx);
   
-    if(n_signals)
+    if(ok || n_signals)
         ldm_setup();
 
     if(failed)
@@ -365,6 +454,8 @@ void fans_init (void)
     };
 
     if(ioports_cfg(&d_out, Port_Digital, Port_Output)->n_ports && (nvs_address = nvs_alloc(sizeof(ldm_settings_t)))) {
+
+        ioports_cfg(&a_out, Port_Analog, Port_Output);
 
         settings_register(&setting_details);
 
