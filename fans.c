@@ -24,9 +24,10 @@
 /*TODO
 - move all code to laser plugin
 - add realtime report of powder feed rate
-- add linearization of powder feed rate
-- add nulling out of powder feed rate on reset
+- add linearization of powder feed rate (add settings?)
+- add nulling out of powder feed rate on reset (necessary?)
 - consider how to toggle pilot / shutter in macros (or not necessary)
+- add control of powder on / off via custom mcode (allow powder off independent of coolant ...)
 */
 #include "driver.h"
 
@@ -69,16 +70,16 @@ typedef enum {
 } ldm_signals_t;
 
 typedef enum {
-    LaserPilot_On = 510,
-    LaserPilot_Off = 511,
-    LaserShutter_On = 512,
-    LaserShutter_Off = 513,
-    LaserThreshold_On = 514,
-    LaserThreshold_Off = 515,
-    LaserErrorReset_Mom = 516,
-    PowderSelectHopper1 = 520,
-    PowderSelectHopper2 = 522,
-    PowderFeedRate = 530
+    LaserErrorReset_Mom = 510,
+    LaserPilot_On = 511,
+    LaserPilot_Off = 512,
+    LaserShutter_On = 513,
+    LaserShutter_Off = 514,
+    LaserThreshold_On = 515,
+    LaserThreshold_Off = 516,
+    PowderFeedRate = 520,       //R#.#
+    PowderSelectHopper1 = 521,
+    PowderSelectHopper2 = 522
 } ldm_mcode_t;
 
 static uint8_t powder_feedrate_port;
@@ -103,7 +104,7 @@ static user_mcode_type_t userMCodeCheck (user_mcode_t mcode)
     return ((ldm_mcode_t) mcode == LaserPilot_On || (ldm_mcode_t) mcode == LaserPilot_Off ||
             (ldm_mcode_t) mcode == LaserShutter_On || (ldm_mcode_t) mcode == LaserShutter_Off ||
             (ldm_mcode_t) mcode == LaserThreshold_On || (ldm_mcode_t) mcode == LaserThreshold_Off ||
-            (ldm_mcode_t) mcode == LaserErrorReset_Mom || (ldm_mcode_t) PowderFeedRate ||
+            (ldm_mcode_t) mcode == LaserErrorReset_Mom || (ldm_mcode_t) mcode == PowderFeedRate ||
             (ldm_mcode_t) mcode == PowderSelectHopper1 || (ldm_mcode_t) mcode == PowderSelectHopper2
             )
                      ? UserMCode_Normal //  Handled by us. Set to UserMCode_NoValueWords if there are any parameter words (letters) without an accompanying value.
@@ -135,13 +136,13 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
         case PowderSelectHopper2:
             break;
         case PowderFeedRate:
-            if(gc_block->words.s) {
-                if(!isintf(gc_block->values.s))
+            if(gc_block->words.r) {
+                if(!isintf(gc_block->values.r))
                     state = Status_BadNumberFormat;
-                else if(gc_block->values.s < -0.0f || gc_block->values.s > 15.0f)
+                else if(gc_block->values.r < 0.5f || gc_block->values.r > 12.0f)
                     state = Status_GcodeValueOutOfRange;
             }
-            gc_block->words.s = Off;
+            gc_block->words.r = Off;
             break;
 
         default:
@@ -155,6 +156,7 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
 static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
 {
     bool handled = true;
+    float value = 0;
 
     if (state != STATE_CHECK_MODE)
       switch((ldm_mcode_t) gc_block->user_mcode) {
@@ -189,7 +191,7 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
             ldm_set_state(PowderSelect, On); // BIT ON = HOPPER 2
             break;
         case PowderFeedRate:
-            float value = (float)gc_block->values.s;
+            value = (float)gc_block->values.r;
             set_powder_feedrate(value);
             break;
 
@@ -266,7 +268,7 @@ void ldm_set_state (uint8_t signal, bool on)
 
 void set_powder_feedrate(float value)
 {
-    ioport_analog_out(powder_feedrate_port, value * 6.6f);
+    ioport_analog_out(powder_feedrate_port, value * 6.8186f - 0.0304f);
 }
 
 static void ldm_setup (void)
@@ -330,6 +332,7 @@ static status_code_t set_float (setting_id_t setting, float value)
 
         default: break;
     }
+    return status;
 }
 
 static float get_float (setting_id_t setting)
@@ -352,7 +355,6 @@ static float get_float (setting_id_t setting)
 
         default: break;
     }
-
     return value;
 }
 
