@@ -28,6 +28,8 @@
 - add nulling out of powder feed rate on reset (necessary?) - remove nulling out of powder select ...
 - consider how to toggle pilot / shutter in macros (or not necessary)
 - add control of powder on / off via custom mcode (allow powder off independent of coolant ...)
+- add setting for which signals are set to zero on a reset
+- confirm default settings behaviour?
 */
 #include "driver.h"
 
