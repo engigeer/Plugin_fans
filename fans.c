@@ -23,9 +23,9 @@
 
 /*TODO
 - move all code to laser plugin
-- add realtime report of powder feed rate
+- add realtime report of powder feed rate (DONE)
 - add linearization of powder feed rate (add settings?)
-- add nulling out of powder feed rate on reset (necessary?)
+- add nulling out of powder feed rate on reset (necessary?) - remove nulling out of powder select ...
 - consider how to toggle pilot / shutter in macros (or not necessary)
 - add control of powder on / off via custom mcode (allow powder off independent of coolant ...)
 */
@@ -98,6 +98,7 @@ static driver_reset_ptr driver_reset;
 bool ldm_get_state (uint8_t signal);
 void ldm_set_state (uint8_t signal, bool on);
 void set_powder_feedrate (float value);
+float pfr_value = 0.0f;
 
 static user_mcode_type_t userMCodeCheck (user_mcode_t mcode)
 {
@@ -136,12 +137,10 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
         case PowderSelectHopper2:
             break;
         case PowderFeedRate:
-            if(gc_block->words.r) {
-                if(!isintf(gc_block->values.r))
-                    state = Status_BadNumberFormat;
-                else if(gc_block->values.r < 0.5f || gc_block->values.r > 12.0f)
-                    state = Status_GcodeValueOutOfRange;
-            }
+            if(!gc_block->words.r)
+                state = Status_GcodeValueWordMissing;
+            else if(gc_block->values.r < 0.5f || gc_block->values.r > 12.0f)
+                state = Status_GcodeValueOutOfRange;
             gc_block->words.r = Off;
             break;
 
@@ -156,7 +155,6 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
 static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
 {
     bool handled = true;
-    float value = 0;
 
     if (state != STATE_CHECK_MODE)
       switch((ldm_mcode_t) gc_block->user_mcode) {
@@ -191,8 +189,8 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
             ldm_set_state(PowderSelect, On); // BIT ON = HOPPER 2
             break;
         case PowderFeedRate:
-            value = (float)gc_block->values.r;
-            set_powder_feedrate(value);
+            pfr_value = (float)gc_block->values.r;
+            set_powder_feedrate(pfr_value);
             break;
 
         default:
@@ -208,10 +206,12 @@ static void driverReset (void)
 {
     driver_reset();
 
-    uint32_t idx = SIGNALS;
-    do {
-        ldm_set_state(--idx, Off);
-    } while(idx);
+    ldm_set_state(LaserThreshold, Off);
+    // ldm_set_state(LaserShutter, Off);
+
+    // ldm_set_state(LaserErrorReset, On);
+    // delay_sec(0.5f, DelayMode_Dwell);
+    // ldm_set_state(LaserErrorReset, Off);
 }
 
 static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
@@ -223,10 +223,23 @@ static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
 
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report)
 {
+    static float pfr_prev = 0.0f;
+
+    char buf[20] = "";
+
     if(report.fan) {
-        stream_write("|LDM:");
-        stream_write(uitoa(signals_on));
+        strcat(buf, "|LDM:");
+        strcat(buf, uitoa(signals_on));
     }
+
+    if(pfr_prev != pfr_value || report.all) {
+        strcat(buf, "|PFR:");
+        strcat(buf, ftoa(pfr_value, 2));
+        pfr_prev = pfr_value;
+    }
+
+    if(*buf != '\0')
+        stream_write(buf);
 
     if(on_realtime_report)
         on_realtime_report(stream_write, report);
