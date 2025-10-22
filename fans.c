@@ -32,6 +32,7 @@
 - group settings in LDM tab
 - confirm default settings behaviour?
 - reload rpm to 0 when changing settings
+- is dout_get_next working as expected?
 */
 
 #include "driver.h"
@@ -469,7 +470,7 @@ static void ldm_settings_restore (void)
 
     do {
         idx--;
-        ldm_setting.port[idx] = d_out.get_next(&d_out, idx == SIGNALS - 1 ? IOPORT_UNASSIGNED : ldm_setting.port[idx + 1], signal_names[idx], (pin_cap_t){});
+        ldm_setting.port[idx] = d_out.get_next(&d_out, ldm_setting.port[idx], signal_names[idx], (pin_cap_t){});
     } while(idx);
 
     uint32_t idy = PFR_NPWMPIECES;
