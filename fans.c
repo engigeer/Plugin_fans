@@ -29,8 +29,11 @@
 - consider how to toggle pilot / shutter in macros (or not necessary)
 - add control of powder on / off via custom mcode (allow powder off independent of coolant ...)
 - add setting for which signals are set to zero on a reset
+- group settings in LDM tab
 - confirm default settings behaviour?
+- reload rpm to 0 when changing settings
 */
+
 #include "driver.h"
 
 #if FANS_ENABLE
@@ -40,19 +43,23 @@
 // #endif
 
 #define SIGNALS 5
+#define PFR_NPWMPIECES 4
+
 #define CMD_PILOT_TOGGLE            0xBA //!< Realtime command to toggle Pilot on/off
 #define CMD_SHUTTER_TOGGLE          0xBB //!< Realtime command to toggle Shutter on/off
 
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 #include "grbl/hal.h"
 #include "grbl/protocol.h"
 #include "grbl/nvs_buffer.h"
 
 typedef struct {
-    uint8_t port[5];
+    uint8_t port[SIGNALS];
     uint8_t powder_feedrate_port;
+    pwm_piece_t pfr_pwm[PFR_NPWMPIECES];
 } ldm_settings_t;
 
 static const char *signal_names[] = {
@@ -281,9 +288,25 @@ void ldm_set_state (uint8_t signal, bool on)
     }
 }
 
-void set_powder_feedrate(float value)
+void set_powder_feedrate(float rpm)
 {
-    ioport_analog_out(powder_feedrate_port, value * 6.8186f - 0.0304f);
+        uint_fast8_t idx = PFR_NPWMPIECES;
+        float pwm_value = 0.0f;
+
+        if (!isnan(ldm_setting.pfr_pwm[0].rpm) && ldm_setting.pfr_pwm[0].start > 0) {
+            do {
+                idx--;
+                if(idx == 0 || rpm > ldm_setting.pfr_pwm[idx].rpm) {
+                    pwm_value = (ldm_setting.pfr_pwm[idx].start * rpm + ldm_setting.pfr_pwm[idx].end);
+                    break;
+                }
+            } while(idx);
+        }
+        else {
+            pwm_value= min(10.0f * rpm, 100.0f);
+        }
+
+    ioport_analog_out(powder_feedrate_port, pwm_value);
 }
 
 static void ldm_setup (void)
@@ -373,6 +396,39 @@ static float get_float (setting_id_t setting)
     return value;
 }
 
+static status_code_t set_linear_piece (setting_id_t id, char *svalue)
+{
+    uint32_t idx = id - Setting_UserDefined_6;
+    float rpm, start, end;
+
+    if(*svalue == '\0' || (svalue[0] == '0' && svalue[1] == '\0')) {
+        ldm_setting.pfr_pwm[idx].rpm = NAN;
+        ldm_setting.pfr_pwm[idx].start = 0.0f;
+        ldm_setting.pfr_pwm[idx].end = 0.0f;
+    } else if(sscanf(svalue, "%f,%f,%f", &rpm, &start, &end) == 3) {
+        ldm_setting.pfr_pwm[idx].rpm = rpm;
+        ldm_setting.pfr_pwm[idx].start = start;
+        ldm_setting.pfr_pwm[idx].end = end;
+    } else
+        return Status_SettingValueOutOfRange;
+
+    return Status_OK;
+}
+
+static char *get_linear_piece (setting_id_t id)
+{
+    static char buf[40];
+
+    uint32_t idx = id - Setting_UserDefined_6;
+
+    if(isnan(ldm_setting.pfr_pwm[idx].rpm))
+        *buf = '\0';
+    else
+        snprintf(buf, sizeof(buf), "%g,%g,%g", ldm_setting.pfr_pwm[idx].rpm, ldm_setting.pfr_pwm[idx].start, ldm_setting.pfr_pwm[idx].end);
+
+    return buf;
+}
+
 static const setting_detail_t ldm_settings[] = {
     { Setting_UserDefined_0, Group_AuxPorts, "Laser Pilot port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_1, Group_AuxPorts, "Laser Shutter port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
@@ -380,6 +436,10 @@ static const setting_detail_t ldm_settings[] = {
     { Setting_UserDefined_3, Group_AuxPorts, "Laser error reset port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_4, Group_AuxPorts, "Powder Select port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_5, Group_AuxPorts, "Powder Feedrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_6, Group_AuxPorts, "PWM linearization, 1st point", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
+    { Setting_UserDefined_7, Group_AuxPorts, "PWM linearization, 2nd point", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
+    { Setting_UserDefined_8, Group_AuxPorts, "PWM linearization, 3rd point", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
+    { Setting_UserDefined_9, Group_AuxPorts, "PWM linearization, 4th point", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
 };
 
 static const setting_descr_t ldm_settings_descr[] = {
@@ -389,6 +449,10 @@ static const setting_descr_t ldm_settings_descr[] = {
     { Setting_UserDefined_3, "Aux output port number to use for laser error reset. Set to -1 to disable." },
     { Setting_UserDefined_4, "Aux output port number to use for powder select control. Set to -1 to disable." },
     { Setting_UserDefined_5, "Aux output port number to use for powder feedrate." },
+    { Setting_UserDefined_6, "Comma separated list of values: RPM_MIN, RPM_LINE_A1, RPM_LINE_B1, set to blank to disable." },
+    { Setting_UserDefined_7, "Comma separated list of values: RPM_POINT12, RPM_LINE_A2, RPM_LINE_B2, set to blank to disable." },
+    { Setting_UserDefined_8, "Comma separated list of values: RPM_POINT23, RPM_LINE_A3, RPM_LINE_B3, set to blank to disable." },
+    { Setting_UserDefined_9, "Comma separated list of values: RPM_POINT34, RPM_LINE_A4, RPM_LINE_B4, set to blank to disable." },
 };
 
 // Write settings to non volatile storage (NVS).
@@ -407,6 +471,13 @@ static void ldm_settings_restore (void)
         idx--;
         ldm_setting.port[idx] = d_out.get_next(&d_out, idx == SIGNALS - 1 ? IOPORT_UNASSIGNED : ldm_setting.port[idx + 1], signal_names[idx], (pin_cap_t){});
     } while(idx);
+
+    uint32_t idy = PFR_NPWMPIECES;
+
+    do {
+        idy--;
+        ldm_setting.pfr_pwm[idy] = (pwm_piece_t){ .rpm = NAN, .start = 0.0f, .end = 0.0f };
+    } while(idy);
 
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&ldm_setting, sizeof(ldm_settings_t), true);
 }
@@ -451,7 +522,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt) {
-        report_plugin("LDM-Fans", "0.03");
+        report_plugin("LDM-Fans", "0.04");
         hal.stream.write("[LDM:");
         hal.stream.write(uitoa(n_signals));
         hal.stream.write("]" ASCII_EOL);
