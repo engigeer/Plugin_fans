@@ -44,7 +44,6 @@
 // #endif
 
 #define SIGNALS 5
-#define PFR_NPWMPIECES 4
 
 #define CMD_PILOT_TOGGLE            0xBA //!< Realtime command to toggle Pilot on/off
 #define CMD_SHUTTER_TOGGLE          0xBB //!< Realtime command to toggle Shutter on/off
@@ -60,7 +59,8 @@
 typedef struct {
     uint8_t port[SIGNALS];
     uint8_t powder_feedrate_port;
-    pwm_piece_t pfr_pwm[PFR_NPWMPIECES];
+    uint8_t carriergas_flowrate_port;
+    uint8_t nozzlegas_flowrate_port;
 } ldm_settings_t;
 
 static const char *signal_names[] = {
@@ -87,12 +87,21 @@ typedef enum {
     LaserShutter_Off = 514,
     LaserThreshold_On = 515,
     LaserThreshold_Off = 516,
+    CarrierGasFlowRate = 530,       //R#.#
+    NozzleGasFlowRate = 540,       //R#.#
     PowderFeedRate = 520,       //R#.#
     PowderSelectHopper1 = 521,
     PowderSelectHopper2 = 522
 } ldm_mcode_t;
 
+static const float cgas_maxval = 10.0f;
+static const float ngas_maxval = 50.0f;
+static const float pfr_maxval = 12.0f;
+
 static uint8_t powder_feedrate_port;
+static uint8_t carriergas_flowrate_port;
+static uint8_t nozzlegas_flowrate_port;
+
 static uint32_t n_signals = 0, signals_on = 0;
 static user_mcode_ptrs_t user_mcode;
 static ldm_settings_t ldm_setting, signals;
@@ -108,7 +117,12 @@ static driver_reset_ptr driver_reset;
 bool ldm_get_state (uint8_t signal);
 void ldm_set_state (uint8_t signal, bool on);
 void set_powder_feedrate (float value);
+void set_carriergas_flowrate (float value);
+void set_nozzlegas_flowrate (float value);
+
 float pfr_value = 0.0f;
+float cgas_value = 0.0f;
+float ngas_value = 0.0f;
 
 static user_mcode_type_t userMCodeCheck (user_mcode_t mcode)
 {
@@ -116,6 +130,7 @@ static user_mcode_type_t userMCodeCheck (user_mcode_t mcode)
             (ldm_mcode_t) mcode == LaserShutter_On || (ldm_mcode_t) mcode == LaserShutter_Off ||
             (ldm_mcode_t) mcode == LaserThreshold_On || (ldm_mcode_t) mcode == LaserThreshold_Off ||
             (ldm_mcode_t) mcode == LaserErrorReset_Mom || (ldm_mcode_t) mcode == PowderFeedRate ||
+            (ldm_mcode_t) mcode == CarrierGasFlowRate || (ldm_mcode_t) mcode == NozzleGasFlowRate ||
             (ldm_mcode_t) mcode == PowderSelectHopper1 || (ldm_mcode_t) mcode == PowderSelectHopper2
             )
                      ? UserMCode_Normal //  Handled by us. Set to UserMCode_NoValueWords if there are any parameter words (letters) without an accompanying value.
@@ -149,11 +164,27 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
         case PowderFeedRate:
             if(!gc_block->words.r)
                 state = Status_GcodeValueWordMissing;
-            else if(gc_block->values.r < 0.5f || gc_block->values.r > 12.0f)
+            else if(gc_block->values.r < 0.0f || gc_block->values.r > pfr_maxval)
                 state = Status_GcodeValueOutOfRange;
+                sys.report.all = On;
             gc_block->words.r = Off;
             break;
-
+        case CarrierGasFlowRate:
+            if(!gc_block->words.r)
+                state = Status_GcodeValueWordMissing;
+            else if(gc_block->values.r < 0.0f || gc_block->values.r > cgas_maxval)
+                state = Status_GcodeValueOutOfRange;
+                sys.report.all = On;
+            gc_block->words.r = Off;
+            break;
+        case NozzleGasFlowRate:
+            if(!gc_block->words.r)
+                state = Status_GcodeValueWordMissing;
+            else if(gc_block->values.r < 0.0f || gc_block->values.r > ngas_maxval)
+                state = Status_GcodeValueOutOfRange;
+                sys.report.all = On;
+            gc_block->words.r = Off;
+            break;
         default:
             state = Status_Unhandled;
             break;
@@ -202,6 +233,14 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
             pfr_value = (float)gc_block->values.r;
             set_powder_feedrate(pfr_value);
             break;
+        case CarrierGasFlowRate:
+            cgas_value = (float)gc_block->values.r;
+            set_carriergas_flowrate(cgas_value);
+            break;
+        case NozzleGasFlowRate:
+            ngas_value = (float)gc_block->values.r;
+            set_nozzlegas_flowrate(ngas_value);
+            break;
 
         default:
             handled = false;
@@ -234,8 +273,10 @@ static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report)
 {
     static float pfr_prev = 0.0f;
+    static float cgas_prev = 0.0f;
+    static float ngas_prev = 0.0f;
 
-    char buf[20] = "";
+    char buf[60] = "";
 
     if(report.fan) {
         strcat(buf, "|LDM:");
@@ -246,6 +287,18 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
         strcat(buf, "|PFR:");
         strcat(buf, ftoa(pfr_value, 2));
         pfr_prev = pfr_value;
+    }
+
+    if(cgas_prev != cgas_value || report.all) {
+        strcat(buf, "|CGAS:");
+        strcat(buf, ftoa(cgas_value, 0));
+        cgas_prev = cgas_value;
+    }
+
+    if(ngas_prev != ngas_value || report.all) {
+        strcat(buf, "|NGAS:");
+        strcat(buf, ftoa(ngas_value, 0));
+        ngas_prev = ngas_value;
     }
 
     if(*buf != '\0')
@@ -291,23 +344,29 @@ void ldm_set_state (uint8_t signal, bool on)
 
 void set_powder_feedrate(float rpm)
 {
-        uint_fast8_t idx = PFR_NPWMPIECES;
-        float pwm_value = 0.0f;
+    float pwm_value = 0.0f;
 
-        if (!isnan(ldm_setting.pfr_pwm[0].rpm) && ldm_setting.pfr_pwm[0].start > 0) {
-            do {
-                idx--;
-                if(idx == 0 || rpm > ldm_setting.pfr_pwm[idx].rpm) {
-                    pwm_value = (ldm_setting.pfr_pwm[idx].start * rpm + ldm_setting.pfr_pwm[idx].end);
-                    break;
-                }
-            } while(idx);
-        }
-        else {
-            pwm_value= min(10.0f * rpm, 100.0f);
-        }
+    pwm_value= min(100.0f/pfr_maxval * rpm, 100.0f);
 
     ioport_analog_out(powder_feedrate_port, pwm_value);
+}
+
+void set_carriergas_flowrate(float rpm)
+{
+    float pwm_value = 0.0f;
+
+    pwm_value= min(100.0f/cgas_maxval * rpm, 100.0f);
+
+    ioport_analog_out(carriergas_flowrate_port, pwm_value);
+}
+
+void set_nozzlegas_flowrate(float rpm)
+{
+    float pwm_value = 0.0f;
+
+    pwm_value= min(100.0f/ngas_maxval * rpm, 100.0f);
+
+    ioport_analog_out(nozzlegas_flowrate_port, pwm_value);
 }
 
 static void ldm_setup (void)
@@ -343,6 +402,8 @@ static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t
             return d_out.n_ports >= setting->id - Setting_UserDefined_0;
 
         case Setting_UserDefined_5:
+        case Setting_UserDefined_6:
+        case Setting_UserDefined_7:
             return a_out.n_ports > 0;
 
         default: break;
@@ -369,6 +430,14 @@ static status_code_t set_float (setting_id_t setting, float value)
             status = a_out.set_value(&a_out, &ldm_setting.powder_feedrate_port, (pin_cap_t){}, value);
             break;
 
+        case Setting_UserDefined_6:
+            status = a_out.set_value(&a_out, &ldm_setting.carriergas_flowrate_port, (pin_cap_t){}, value);
+            break;
+
+        case Setting_UserDefined_7:
+            status = a_out.set_value(&a_out, &ldm_setting.nozzlegas_flowrate_port, (pin_cap_t){}, value);
+            break;
+
         default: break;
     }
     return status;
@@ -392,42 +461,17 @@ static float get_float (setting_id_t setting)
             value = a_out.get_value(&a_out, ldm_setting.powder_feedrate_port);
             break;
 
+        case Setting_UserDefined_6:
+            value = a_out.get_value(&a_out, ldm_setting.carriergas_flowrate_port);
+            break;
+
+        case Setting_UserDefined_7:
+            value = a_out.get_value(&a_out, ldm_setting.nozzlegas_flowrate_port);
+            break;
+
         default: break;
     }
     return value;
-}
-
-static status_code_t set_linear_piece (setting_id_t id, char *svalue)
-{
-    uint32_t idx = id - Setting_UserDefined_6;
-    float rpm, start, end;
-
-    if(*svalue == '\0' || (svalue[0] == '0' && svalue[1] == '\0')) {
-        ldm_setting.pfr_pwm[idx].rpm = NAN;
-        ldm_setting.pfr_pwm[idx].start = 0.0f;
-        ldm_setting.pfr_pwm[idx].end = 0.0f;
-    } else if(sscanf(svalue, "%f,%f,%f", &rpm, &start, &end) == 3) {
-        ldm_setting.pfr_pwm[idx].rpm = rpm;
-        ldm_setting.pfr_pwm[idx].start = start;
-        ldm_setting.pfr_pwm[idx].end = end;
-    } else
-        return Status_SettingValueOutOfRange;
-
-    return Status_OK;
-}
-
-static char *get_linear_piece (setting_id_t id)
-{
-    static char buf[40];
-
-    uint32_t idx = id - Setting_UserDefined_6;
-
-    if(isnan(ldm_setting.pfr_pwm[idx].rpm))
-        *buf = '\0';
-    else
-        snprintf(buf, sizeof(buf), "%g,%g,%g", ldm_setting.pfr_pwm[idx].rpm, ldm_setting.pfr_pwm[idx].start, ldm_setting.pfr_pwm[idx].end);
-
-    return buf;
 }
 
 static const setting_detail_t ldm_settings[] = {
@@ -437,10 +481,8 @@ static const setting_detail_t ldm_settings[] = {
     { Setting_UserDefined_3, Group_AuxPorts, "Laser error reset port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_4, Group_AuxPorts, "Powder Select port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_5, Group_AuxPorts, "Powder Feedrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_6, Group_AuxPorts, "PWM linearization, 1st point", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
-    { Setting_UserDefined_7, Group_AuxPorts, "PWM linearization, 2nd point", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
-    { Setting_UserDefined_8, Group_AuxPorts, "PWM linearization, 3rd point", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
-    { Setting_UserDefined_9, Group_AuxPorts, "PWM linearization, 4th point", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
+    { Setting_UserDefined_6, Group_AuxPorts, "Carrier Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_7, Group_AuxPorts, "Nozzle Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
 };
 
 static const setting_descr_t ldm_settings_descr[] = {
@@ -450,10 +492,8 @@ static const setting_descr_t ldm_settings_descr[] = {
     { Setting_UserDefined_3, "Aux output port number to use for laser error reset. Set to -1 to disable." },
     { Setting_UserDefined_4, "Aux output port number to use for powder select control. Set to -1 to disable." },
     { Setting_UserDefined_5, "Aux output port number to use for powder feedrate." },
-    { Setting_UserDefined_6, "Comma separated list of values: RPM_MIN, RPM_LINE_A1, RPM_LINE_B1, set to blank to disable." },
-    { Setting_UserDefined_7, "Comma separated list of values: RPM_POINT12, RPM_LINE_A2, RPM_LINE_B2, set to blank to disable." },
-    { Setting_UserDefined_8, "Comma separated list of values: RPM_POINT23, RPM_LINE_A3, RPM_LINE_B3, set to blank to disable." },
-    { Setting_UserDefined_9, "Comma separated list of values: RPM_POINT34, RPM_LINE_A4, RPM_LINE_B4, set to blank to disable." },
+    { Setting_UserDefined_6, "Aux output port number to use for carrier gas flowrate." },
+    { Setting_UserDefined_7, "Aux output port number to use for nozzle gas flowrate." },
 };
 
 // Write settings to non volatile storage (NVS).
@@ -473,29 +513,69 @@ static void ldm_settings_restore (void)
         ldm_setting.port[idx] = d_out.get_next(&d_out, ldm_setting.port[idx], signal_names[idx], (pin_cap_t){});
     } while(idx);
 
-    uint32_t idy = PFR_NPWMPIECES;
-
-    do {
-        idy--;
-        ldm_setting.pfr_pwm[idy] = (pwm_piece_t){ .rpm = NAN, .start = 0.0f, .end = 0.0f };
-    } while(idy);
-
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&ldm_setting, sizeof(ldm_settings_t), true);
 }
 
 static void ldm_settings_load (void)
 {
     bool ok = false;
+    xbar_t *pin = NULL;
     uint_fast8_t failed = 0;
     uint_fast8_t idx = SIGNALS;
+
+    pwm_config_t config = {
+        .freq_hz = 250.0f,
+        .min = 0.0f,
+        .max = 100.0f,
+        .off_value = 0.0f,
+        .min_value = 0.0f,
+        .max_value = 100.0f,
+        .invert = Off
+    };
 
     if(hal.nvs.memcpy_from_nvs((uint8_t *)&ldm_setting, nvs_address, sizeof(ldm_settings_t), true) != NVS_TransferResult_OK)
         ldm_settings_restore();
 
     powder_feedrate_port = ldm_setting.powder_feedrate_port;
+    carriergas_flowrate_port = ldm_setting.carriergas_flowrate_port;
+    nozzlegas_flowrate_port = ldm_setting.nozzlegas_flowrate_port;
 
-    if(powder_feedrate_port == IOPORT_UNASSIGNED || a_out.claim(&a_out, &powder_feedrate_port, "Powder feedrate", (pin_cap_t){}))
+    if(powder_feedrate_port == IOPORT_UNASSIGNED || (pin = a_out.claim(&a_out, &powder_feedrate_port, "Powder feedrate", (pin_cap_t){}))) {
         ok = true;
+        if (pin->pin == 1 || pin->pin == 2){
+            config.invert = On;
+            pin->config(pin, &config, false);
+        } else {
+            config.invert = Off;
+            pin->config(pin, &config, false);
+        }
+    }
+    else
+        failed++;
+
+    if(carriergas_flowrate_port == IOPORT_UNASSIGNED|| (pin = a_out.claim(&a_out, &carriergas_flowrate_port, "Carrier gas flowrate", (pin_cap_t){}))) {
+        ok = true;
+        if (pin->pin == 1 || pin->pin == 2){
+            config.invert = On;
+            pin->config(pin, &config, false);
+        } else {
+            config.invert = Off;
+            pin->config(pin, &config, false);
+        }
+    }
+    else
+        failed++;
+
+    if(nozzlegas_flowrate_port == IOPORT_UNASSIGNED|| (pin = a_out.claim(&a_out, &nozzlegas_flowrate_port, "Nozzle gas flowrate", (pin_cap_t){}))) {
+        ok = true;
+        if (pin->pin == 1 || pin->pin == 2){
+            config.invert = On;
+            pin->config(pin, &config, false);
+        } else {
+            config.invert = Off;
+            pin->config(pin, &config, false);
+        }
+    }
     else
         failed++;
 
@@ -523,7 +603,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt) {
-        report_plugin("LDM-Fans", "0.04");
+        report_plugin("LDM-Fans", "0.05");
         hal.stream.write("[LDM:");
         hal.stream.write(uitoa(n_signals));
         hal.stream.write("]" ASCII_EOL);
