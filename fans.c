@@ -164,25 +164,28 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
         case PowderFeedRate:
             if(!gc_block->words.r)
                 state = Status_GcodeValueWordMissing;
-            else if(gc_block->values.r < 0.0f || gc_block->values.r > pfr_maxval)
+            else if(gc_block->values.r < 0.0f || gc_block->values.r > pfr_maxval){
                 state = Status_GcodeValueOutOfRange;
                 sys.report.all = On;
+            }
             gc_block->words.r = Off;
             break;
         case CarrierGasFlowRate:
             if(!gc_block->words.r)
                 state = Status_GcodeValueWordMissing;
-            else if(gc_block->values.r < 0.0f || gc_block->values.r > cgas_maxval)
+            else if(gc_block->values.r < 0.0f || gc_block->values.r > cgas_maxval){
                 state = Status_GcodeValueOutOfRange;
                 sys.report.all = On;
+            }
             gc_block->words.r = Off;
             break;
         case NozzleGasFlowRate:
             if(!gc_block->words.r)
                 state = Status_GcodeValueWordMissing;
-            else if(gc_block->values.r < 0.0f || gc_block->values.r > ngas_maxval)
+            else if(gc_block->values.r < 0.0f || gc_block->values.r > ngas_maxval){
                 state = Status_GcodeValueOutOfRange;
                 sys.report.all = On;
+            }
             gc_block->words.r = Off;
             break;
         default:
