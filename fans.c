@@ -230,7 +230,7 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
             ldm_set_state(PowderSelect, On); // BIT ON = HOPPER 2
             break;
         case PowderFeedRate:
-            pfr_value = (float)gc_block->values.r;
+            pfr_value = floorf((float)gc_block->values.r * 100)/100;
             set_powder_feedrate(pfr_value);
             break;
         case CarrierGasFlowRate:
