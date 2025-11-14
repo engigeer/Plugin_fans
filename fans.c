@@ -527,7 +527,7 @@ static void ldm_settings_load (void)
     uint_fast8_t idx = SIGNALS;
 
     pwm_config_t config = {
-        .freq_hz = 250.0f,
+        .freq_hz = 200.0f,
         .min = 0.0f,
         .max = 100.0f,
         .off_value = 0.0f,
