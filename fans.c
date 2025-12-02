@@ -237,11 +237,11 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
             set_powder_feedrate(pfr_value);
             break;
         case CarrierGasFlowRate:
-            cgas_value = (float)gc_block->values.r;
+            cgas_value = floorf((float)gc_block->values.r);
             set_carriergas_flowrate(cgas_value);
             break;
         case NozzleGasFlowRate:
-            ngas_value = (float)gc_block->values.r;
+            ngas_value = floorf((float)gc_block->values.r);
             set_nozzlegas_flowrate(ngas_value);
             break;
 
