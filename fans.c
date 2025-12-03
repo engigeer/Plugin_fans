@@ -76,7 +76,9 @@ typedef enum {
     LaserShutter = 1,
     LaserThreshold = 2,
     LaserErrorReset = 3,
-    PowderSelect = 4
+    PowderSelect = 4,
+    NozzleIsolate = 5,
+    NozzlePurge = 6
 } ldm_signals_t;
 
 typedef enum {
@@ -91,7 +93,8 @@ typedef enum {
     NozzleGasFlowRate = 540,       //R#.#
     PowderFeedRate = 520,       //R#.#
     PowderSelectHopper1 = 521,
-    PowderSelectHopper2 = 522
+    PowderSelectHopper2 = 522,
+    NozzlePurgeSubRoutine = 523
 } ldm_mcode_t;
 
 static const float cgas_maxval = 10.0f;
@@ -131,7 +134,8 @@ static user_mcode_type_t userMCodeCheck (user_mcode_t mcode)
             (ldm_mcode_t) mcode == LaserThreshold_On || (ldm_mcode_t) mcode == LaserThreshold_Off ||
             (ldm_mcode_t) mcode == LaserErrorReset_Mom || (ldm_mcode_t) mcode == PowderFeedRate ||
             (ldm_mcode_t) mcode == CarrierGasFlowRate || (ldm_mcode_t) mcode == NozzleGasFlowRate ||
-            (ldm_mcode_t) mcode == PowderSelectHopper1 || (ldm_mcode_t) mcode == PowderSelectHopper2
+            (ldm_mcode_t) mcode == PowderSelectHopper1 || (ldm_mcode_t) mcode == PowderSelectHopper2 ||
+            (ldm_mcode_t) mcode == NozzlePurgeSubRoutine
             )
                      ? UserMCode_Normal //  Handled by us. Set to UserMCode_NoValueWords if there are any parameter words (letters) without an accompanying value.
                      : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Unsupported);	// If another handler present then call it or return ignore.
@@ -160,6 +164,8 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
         case PowderSelectHopper1:
             break;
         case PowderSelectHopper2:
+            break;
+        case NozzlePurgeSubRoutine:
             break;
         case PowderFeedRate:
             if(!gc_block->words.r)
@@ -232,6 +238,15 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
         case PowderSelectHopper2:
             ldm_set_state(PowderSelect, On); // BIT ON = HOPPER 2
             break;
+        case NozzlePurgeSubRoutine:
+            ldm_set_state(NozzleIsolate, On);
+            delay_sec(1.0f, DelayMode_Dwell);
+            ldm_set_state(NozzlePurge, On);
+            delay_sec(10.f, DelayMode_Dwell);
+            ldm_set_state(NozzlePurge, Off);
+            delay_sec(1.0f, DelayMode_Dwell);
+            ldm_set_state(NozzleIsolate, Off);          
+            break;
         case PowderFeedRate:
             pfr_value = floorf((float)gc_block->values.r * 100)/100;
             set_powder_feedrate(pfr_value);
@@ -258,8 +273,10 @@ static void driverReset (void)
 {
     driver_reset();
 
-    ldm_set_state(LaserThreshold, Off);
     // ldm_set_state(LaserShutter, Off);
+    ldm_set_state(LaserThreshold, Off);
+    ldm_set_state(NozzleIsolate, Off);
+    ldm_set_state(NozzlePurge, Off);
 
     // ldm_set_state(LaserErrorReset, On);
     // delay_sec(0.5f, DelayMode_Dwell);
@@ -402,11 +419,13 @@ static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t
         case Setting_UserDefined_2:
         case Setting_UserDefined_3:
         case Setting_UserDefined_4:
-            return d_out.n_ports >= setting->id - Setting_UserDefined_0;
-
         case Setting_UserDefined_5:
         case Setting_UserDefined_6:
+            return d_out.n_ports >= setting->id - Setting_UserDefined_0;
+
         case Setting_UserDefined_7:
+        case Setting_UserDefined_8:
+        case Setting_UserDefined_9:
             return a_out.n_ports > 0;
 
         default: break;
@@ -426,18 +445,20 @@ static status_code_t set_float (setting_id_t setting, float value)
         case Setting_UserDefined_2:
         case Setting_UserDefined_3:
         case Setting_UserDefined_4:
+        case Setting_UserDefined_5:
+        case Setting_UserDefined_6:
             status = d_out.set_value(&d_out, &ldm_setting.port[setting - Setting_UserDefined_0], (pin_cap_t){}, value);
             break;
 
-        case Setting_UserDefined_5:
+        case Setting_UserDefined_7:
             status = a_out.set_value(&a_out, &ldm_setting.powder_feedrate_port, (pin_cap_t){}, value);
             break;
 
-        case Setting_UserDefined_6:
+        case Setting_UserDefined_8:
             status = a_out.set_value(&a_out, &ldm_setting.carriergas_flowrate_port, (pin_cap_t){}, value);
             break;
 
-        case Setting_UserDefined_7:
+        case Setting_UserDefined_9:
             status = a_out.set_value(&a_out, &ldm_setting.nozzlegas_flowrate_port, (pin_cap_t){}, value);
             break;
 
@@ -457,18 +478,20 @@ static float get_float (setting_id_t setting)
         case Setting_UserDefined_2:
         case Setting_UserDefined_3:
         case Setting_UserDefined_4:
+        case Setting_UserDefined_5:
+        case Setting_UserDefined_6:
             value = d_out.get_value(&d_out, ldm_setting.port[setting - Setting_UserDefined_0]);
             break;
 
-        case Setting_UserDefined_5:
+        case Setting_UserDefined_7:
             value = a_out.get_value(&a_out, ldm_setting.powder_feedrate_port);
             break;
 
-        case Setting_UserDefined_6:
+        case Setting_UserDefined_8:
             value = a_out.get_value(&a_out, ldm_setting.carriergas_flowrate_port);
             break;
 
-        case Setting_UserDefined_7:
+        case Setting_UserDefined_9:
             value = a_out.get_value(&a_out, ldm_setting.nozzlegas_flowrate_port);
             break;
 
@@ -483,9 +506,11 @@ static const setting_detail_t ldm_settings[] = {
     { Setting_UserDefined_2, Group_AuxPorts, "Laser Threshold port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_3, Group_AuxPorts, "Laser error reset port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_4, Group_AuxPorts, "Powder Select port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_5, Group_AuxPorts, "Powder Feedrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_6, Group_AuxPorts, "Carrier Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_7, Group_AuxPorts, "Nozzle Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_5, Group_AuxPorts, "Nozzle isolation port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_6, Group_AuxPorts, "Nozzle gas purge port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_7, Group_AuxPorts, "Powder Feedrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_8, Group_AuxPorts, "Carrier Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_9, Group_AuxPorts, "Nozzle Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
 };
 
 static const setting_descr_t ldm_settings_descr[] = {
@@ -494,9 +519,11 @@ static const setting_descr_t ldm_settings_descr[] = {
     { Setting_UserDefined_2, "Aux output port number to use for laser threshold control. Set to -1 to disable." },
     { Setting_UserDefined_3, "Aux output port number to use for laser error reset. Set to -1 to disable." },
     { Setting_UserDefined_4, "Aux output port number to use for powder select control. Set to -1 to disable." },
-    { Setting_UserDefined_5, "Aux output port number to use for powder feedrate." },
-    { Setting_UserDefined_6, "Aux output port number to use for carrier gas flowrate." },
-    { Setting_UserDefined_7, "Aux output port number to use for nozzle gas flowrate." },
+    { Setting_UserDefined_5, "Aux output port number to use for nozzle isolation control. Set to -1 to disable." },
+    { Setting_UserDefined_6, "Aux output port number to use for powder gas purge control. Set to -1 to disable." },
+    { Setting_UserDefined_7, "Aux output port number to use for powder feedrate." },
+    { Setting_UserDefined_8, "Aux output port number to use for carrier gas flowrate." },
+    { Setting_UserDefined_9, "Aux output port number to use for nozzle gas flowrate." },
 };
 
 // Write settings to non volatile storage (NVS).
@@ -606,7 +633,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt) {
-        report_plugin("LDM-Fans", "0.05");
+        report_plugin("LDM-Fans", "0.06");
         hal.stream.write("[LDM:");
         hal.stream.write(uitoa(n_signals));
         hal.stream.write("]" ASCII_EOL);
