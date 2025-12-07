@@ -575,7 +575,7 @@ static void ldm_settings_load (void)
         if (pin->pin == 1 || pin->pin == 2){
             config.invert = On;
             pin->config(pin, &config, false);
-        } else {
+        } else if (pin->config){
             config.invert = Off;
             pin->config(pin, &config, false);
         }
@@ -588,7 +588,7 @@ static void ldm_settings_load (void)
         if (pin->pin == 1 || pin->pin == 2){
             config.invert = On;
             pin->config(pin, &config, false);
-        } else {
+        } else if (pin->config){
             config.invert = Off;
             pin->config(pin, &config, false);
         }
@@ -601,7 +601,7 @@ static void ldm_settings_load (void)
         if (pin->pin == 1 || pin->pin == 2){
             config.invert = On;
             pin->config(pin, &config, false);
-        } else {
+        } else if (pin->config){
             config.invert = Off;
             pin->config(pin, &config, false);
         }
