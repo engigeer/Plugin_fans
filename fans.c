@@ -43,7 +43,7 @@
 // #error "FANS PLUGIN CANNOT BE ENABLED WITH CUSTOM LDM PLUGIN"
 // #endif
 
-#define SIGNALS 5
+#define SIGNALS 7
 
 #define CMD_PILOT_TOGGLE            0xBA //!< Realtime command to toggle Pilot on/off
 #define CMD_SHUTTER_TOGGLE          0xBB //!< Realtime command to toggle Shutter on/off
@@ -68,7 +68,9 @@ static const char *signal_names[] = {
     "Laser Shutter",
     "Laser Threshold",
     "Laser Error Reset",
-    "Powder Select"
+    "Powder Select",
+    "Nozzle Isolate",
+    "Nozzle Purge"
 };
 
 typedef enum {
