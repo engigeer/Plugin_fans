@@ -47,12 +47,14 @@
 
 #define CMD_PILOT_TOGGLE            0xBA //!< Realtime command to toggle Pilot on/off
 #define CMD_SHUTTER_TOGGLE          0xBB //!< Realtime command to toggle Shutter on/off
+#define CMD_POWDER_TOGGLE           0xBC //!< Realtime command to toggle Powder on/off
 
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
 
 #include "grbl/hal.h"
+#include "grbl/override.h"
 #include "grbl/protocol.h"
 #include "grbl/nvs_buffer.h"
 
@@ -68,8 +70,8 @@ static const char *signal_names[] = {
     "Laser Shutter",
     "Laser Threshold",
     "Laser Error Reset",
-    "Powder Select",
-    "Nozzle Isolate",
+    "Hopper1 Enable",
+    "Hopper2 Enable",
     "Nozzle Purge"
 };
 
@@ -78,8 +80,8 @@ typedef enum {
     LaserShutter = 1,
     LaserThreshold = 2,
     LaserErrorReset = 3,
-    PowderSelect = 4,
-    NozzleIsolate = 5,
+    Hopper1Enable = 4,
+    Hopper2Enable = 5,
     NozzlePurge = 6
 } ldm_signals_t;
 
@@ -91,12 +93,13 @@ typedef enum {
     LaserShutter_Off = 514,
     LaserThreshold_On = 515,
     LaserThreshold_Off = 516,
-    CarrierGasFlowRate = 530,       //R#.#
-    NozzleGasFlowRate = 540,       //R#.#
-    PowderFeedRate = 520,       //R#.#
-    PowderSelectHopper1 = 521,
-    PowderSelectHopper2 = 522,
-    NozzlePurgeSubRoutine = 523
+    PowderSelectHopper1 = 517,
+    PowderSelectHopper2 = 518,
+    PowderSelectNull = 519,
+    NozzlePurgeToggle = 523, // M521+M522 reserved for nozzle coolant control
+    PowderFeedRate = 530,          //R#.#
+    CarrierGasFlowRate = 540,      //R#.#
+    NozzleGasFlowRate = 550,       //R#.#
 } ldm_mcode_t;
 
 static const float cgas_maxval = 10.0f;
@@ -137,7 +140,7 @@ static user_mcode_type_t userMCodeCheck (user_mcode_t mcode)
             (ldm_mcode_t) mcode == LaserErrorReset_Mom || (ldm_mcode_t) mcode == PowderFeedRate ||
             (ldm_mcode_t) mcode == CarrierGasFlowRate || (ldm_mcode_t) mcode == NozzleGasFlowRate ||
             (ldm_mcode_t) mcode == PowderSelectHopper1 || (ldm_mcode_t) mcode == PowderSelectHopper2 ||
-            (ldm_mcode_t) mcode == NozzlePurgeSubRoutine
+            (ldm_mcode_t) mcode == PowderSelectNull || (ldm_mcode_t) mcode == NozzlePurgeToggle
             )
                      ? UserMCode_Normal //  Handled by us. Set to UserMCode_NoValueWords if there are any parameter words (letters) without an accompanying value.
                      : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Unsupported);	// If another handler present then call it or return ignore.
@@ -167,7 +170,9 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
             break;
         case PowderSelectHopper2:
             break;
-        case NozzlePurgeSubRoutine:
+        case PowderSelectNull:
+            break;
+        case NozzlePurgeToggle:
             break;
         case PowderFeedRate:
             if(!gc_block->words.r)
@@ -235,19 +240,38 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
             ldm_set_state(LaserErrorReset, Off);
             break;
         case PowderSelectHopper1:
-            ldm_set_state(PowderSelect, Off); // BIT OFF = HOPPER 1
+            ldm_set_state(NozzlePurge, Off);
+            ldm_set_state(Hopper2Enable, Off);
+            ldm_set_state(Hopper1Enable, On);
             break;
         case PowderSelectHopper2:
-            ldm_set_state(PowderSelect, On); // BIT ON = HOPPER 2
-            break;
-        case NozzlePurgeSubRoutine:
-            ldm_set_state(NozzleIsolate, On);
-            delay_sec(1.0f, DelayMode_Dwell);
-            ldm_set_state(NozzlePurge, On);
-            delay_sec(10.f, DelayMode_Dwell);
             ldm_set_state(NozzlePurge, Off);
+            ldm_set_state(Hopper1Enable, Off);
+            ldm_set_state(Hopper2Enable, On);
+            break;
+        case PowderSelectNull:
+            ldm_set_state(NozzlePurge, Off);
+            ldm_set_state(Hopper1Enable, Off);
+            ldm_set_state(Hopper2Enable, Off);
+            break;
+        case NozzlePurgeToggle:
+            // bool hop1 = ldm_get_state(Hopper1Enable);
+            // bool hop2 = ldm_get_state(Hopper2Enable);
+            // delay_sec(1.0f, DelayMode_Dwell);
+            // ldm_set_state(NozzlePurge, On);
+
+            ldm_set_state(Hopper1Enable, Off);
+            ldm_set_state(Hopper2Enable, Off);
+            
             delay_sec(1.0f, DelayMode_Dwell);
-            ldm_set_state(NozzleIsolate, Off);          
+            ldm_set_state(NozzlePurge, !ldm_get_state(NozzlePurge));
+
+            // delay_sec(10.f, DelayMode_Dwell);
+            // ldm_set_state(NozzlePurge, Off);
+            // delay_sec(1.0f, DelayMode_Dwell);
+
+            // ldm_set_state(Hopper1Enable, hop1);
+            // ldm_set_state(Hopper2Enable, hop2);         
             break;
         case PowderFeedRate:
             pfr_value = floorf((float)gc_block->values.r * 100)/100;
@@ -277,8 +301,9 @@ static void driverReset (void)
 
     // ldm_set_state(LaserShutter, Off);
     ldm_set_state(LaserThreshold, Off);
-    ldm_set_state(NozzleIsolate, Off);
+    //ldm_set_state(NozzleIsolate, Off);
     ldm_set_state(NozzlePurge, Off);
+    //TODO: How to set hopper select on start-up...
 
     // ldm_set_state(LaserErrorReset, On);
     // delay_sec(0.5f, DelayMode_Dwell);
@@ -330,20 +355,6 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
         on_realtime_report(stream_write, report);
 }
 
-static bool onRealtimeCmd (char c)
-{
-    if(c == CMD_PILOT_TOGGLE && signals.port[LaserPilot] != 0xFF) {
-        ldm_set_state(LaserPilot, !ldm_get_state(LaserPilot));
-        return true;
-    }
-    else if(c == CMD_SHUTTER_TOGGLE && signals.port[LaserShutter] != 0xFF) {
-        ldm_set_state(LaserShutter, !ldm_get_state(LaserShutter));
-        return true;
-    }
-
-    return on_unknown_realtime_cmd == NULL || on_unknown_realtime_cmd(c);
-}
-
 bool ldm_get_state (uint8_t signal)
 {
     return signals.port[signal] != 0xFF && !!(signals_on & (1 << signal));
@@ -389,6 +400,26 @@ void set_nozzlegas_flowrate(float rpm)
     pwm_value= min(100.0f/ngas_maxval * rpm, 100.0f);
 
     ioport_analog_out(nozzlegas_flowrate_port, pwm_value);
+}
+
+static bool onRealtimeCmd (char c)
+{
+    if(c == CMD_PILOT_TOGGLE && signals.port[LaserPilot] != 0xFF) {
+        ldm_set_state(LaserPilot, !ldm_get_state(LaserPilot));
+        return true;
+    }
+    else if(c == CMD_SHUTTER_TOGGLE && signals.port[LaserShutter] != 0xFF) {
+        ldm_set_state(LaserShutter, !ldm_get_state(LaserShutter));
+        return true;
+    }
+    else if(c == CMD_POWDER_TOGGLE) {
+            if(ldm_get_state(PowderSelectHopper1))
+                enqueue_coolant_override(CMD_OVERRIDE_COOLANT_MIST_TOGGLE);
+            else if(ldm_get_state(PowderSelectHopper2))
+                enqueue_coolant_override(CMD_OVERRIDE_COOLANT_FLOOD_TOGGLE);
+        return true;
+    }
+    return on_unknown_realtime_cmd == NULL || on_unknown_realtime_cmd(c);
 }
 
 static void ldm_setup (void)
@@ -507,8 +538,8 @@ static const setting_detail_t ldm_settings[] = {
     { Setting_UserDefined_1, Group_AuxPorts, "Laser Shutter port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_2, Group_AuxPorts, "Laser Threshold port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_3, Group_AuxPorts, "Laser error reset port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_4, Group_AuxPorts, "Powder Select port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_5, Group_AuxPorts, "Nozzle isolation port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_4, Group_AuxPorts, "Powder Hopper1 enable port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_5, Group_AuxPorts, "Powder Hopper2 enable port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_6, Group_AuxPorts, "Nozzle gas purge port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_7, Group_AuxPorts, "Powder Feedrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
     { Setting_UserDefined_8, Group_AuxPorts, "Carrier Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
@@ -520,8 +551,8 @@ static const setting_descr_t ldm_settings_descr[] = {
     { Setting_UserDefined_1, "Aux output port number to use for laser shutter control. Set to -1 to disable." },
     { Setting_UserDefined_2, "Aux output port number to use for laser threshold control. Set to -1 to disable." },
     { Setting_UserDefined_3, "Aux output port number to use for laser error reset. Set to -1 to disable." },
-    { Setting_UserDefined_4, "Aux output port number to use for powder select control. Set to -1 to disable." },
-    { Setting_UserDefined_5, "Aux output port number to use for nozzle isolation control. Set to -1 to disable." },
+    { Setting_UserDefined_4, "Aux output port number to use for control of Hopper1 enable relay/solenoid. Set to -1 to disable." },
+    { Setting_UserDefined_5, "Aux output port number to use for control of Hopper2 enable relay/solenoid. Set to -1 to disable." },
     { Setting_UserDefined_6, "Aux output port number to use for powder gas purge control. Set to -1 to disable." },
     { Setting_UserDefined_7, "Aux output port number to use for powder feedrate." },
     { Setting_UserDefined_8, "Aux output port number to use for carrier gas flowrate." },
