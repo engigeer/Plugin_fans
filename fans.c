@@ -413,9 +413,9 @@ static bool onRealtimeCmd (char c)
         return true;
     }
     else if(c == CMD_POWDER_TOGGLE) {
-            if(ldm_get_state(PowderSelectHopper1))
+            if(ldm_get_state(Hopper1Enable))
                 enqueue_coolant_override(CMD_OVERRIDE_COOLANT_MIST_TOGGLE);
-            else if(ldm_get_state(PowderSelectHopper2))
+            else if(ldm_get_state(Hopper2Enable))
                 enqueue_coolant_override(CMD_OVERRIDE_COOLANT_FLOOD_TOGGLE);
         return true;
     }
@@ -587,7 +587,7 @@ static void ldm_settings_load (void)
     uint_fast8_t idx = SIGNALS;
 
     pwm_config_t config = {
-        .freq_hz = 200.0f,
+        .freq_hz = 5000.0f,
         .min = 0.0f,
         .max = 100.0f,
         .off_value = 0.0f,
