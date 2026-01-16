@@ -59,10 +59,16 @@
 #include "grbl/nvs_buffer.h"
 
 typedef struct {
+    float offset;
+    float slope;
+} pwm_mxb_t;
+
+typedef struct {
     uint8_t port[SIGNALS];
     uint8_t powder_feedrate_port;
     uint8_t carriergas_flowrate_port;
     uint8_t nozzlegas_flowrate_port;
+    pwm_mxb_t blc_pwm[3];
 } ldm_settings_t;
 
 static const char *signal_names[] = {
@@ -377,27 +383,33 @@ void ldm_set_state (uint8_t signal, bool on)
 
 void set_powder_feedrate(float rpm)
 {
-    float pwm_value = 0.0f;
+    float lin_rpm, pwm_value = 0.0f;
 
-    pwm_value= min(100.0f/pfr_maxval * rpm, 100.0f);
+    lin_rpm = ldm_setting.blc_pwm[0].offset + rpm * ldm_setting.blc_pwm[0].slope;
+
+    pwm_value= min(100.0f/pfr_maxval * lin_rpm, 100.0f);
 
     ioport_analog_out(powder_feedrate_port, pwm_value);
 }
 
 void set_carriergas_flowrate(float rpm)
 {
-    float pwm_value = 0.0f;
+    float lin_rpm, pwm_value = 0.0f;
 
-    pwm_value= min(100.0f/cgas_maxval * rpm, 100.0f);
+    lin_rpm = ldm_setting.blc_pwm[1].offset + rpm * ldm_setting.blc_pwm[1].slope;
+
+    pwm_value= min(100.0f/cgas_maxval * lin_rpm, 100.0f);
 
     ioport_analog_out(carriergas_flowrate_port, pwm_value);
 }
 
 void set_nozzlegas_flowrate(float rpm)
 {
-    float pwm_value = 0.0f;
+    float lin_rpm, pwm_value = 0.0f;
 
-    pwm_value= min(100.0f/ngas_maxval * rpm, 100.0f);
+    lin_rpm = ldm_setting.blc_pwm[2].offset + rpm * ldm_setting.blc_pwm[2].slope;
+
+    pwm_value= min(100.0f/ngas_maxval * lin_rpm, 100.0f);
 
     ioport_analog_out(nozzlegas_flowrate_port, pwm_value);
 }
@@ -442,6 +454,10 @@ static void ldm_setup (void)
     on_program_completed = grbl.on_program_completed;
     grbl.on_program_completed = onProgramCompleted;
 }
+
+PROGMEM static const setting_group_detail_t plasma_groups[] = {
+    { Group_Root, Group_Plasma, "Laser Integration" },
+};
 
 static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t offset)
 {
@@ -533,17 +549,51 @@ static float get_float (setting_id_t setting)
     return value;
 }
 
+static status_code_t set_linear_piece (setting_id_t id, char *svalue)
+{
+    uint32_t idx = id - Setting_LinearSpindle1Piece1;
+    float offset, slope;
+
+    if(*svalue == '\0' || (svalue[0] == '0' && svalue[1] == '\0')) {
+        ldm_setting.blc_pwm[idx].offset = 0.0f;
+        ldm_setting.blc_pwm[idx].slope = 1.0f;
+    } else if(sscanf(svalue, "%f,%f,%f", &offset, &slope) == 2) {
+        ldm_setting.blc_pwm[idx].offset = offset;
+        ldm_setting.blc_pwm[idx].slope = slope;
+    } else
+        return Status_SettingValueOutOfRange;
+
+    return Status_OK;
+}
+
+static char *get_linear_piece (setting_id_t id)
+{
+    static char buf[40];
+
+    uint32_t idx = id - Setting_LinearSpindle1Piece1;
+
+    if(isnan(ldm_setting.blc_pwm[idx].offset))
+        *buf = '\0';
+    else
+        snprintf(buf, sizeof(buf), "%g,%g,%g", ldm_setting.blc_pwm[idx].offset, ldm_setting.blc_pwm[idx].slope);
+
+    return buf;
+}
+
 static const setting_detail_t ldm_settings[] = {
-    { Setting_UserDefined_0, Group_AuxPorts, "Laser Pilot port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_1, Group_AuxPorts, "Laser Shutter port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_2, Group_AuxPorts, "Laser Threshold port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_3, Group_AuxPorts, "Laser error reset port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_4, Group_AuxPorts, "Powder Hopper1 enable port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_5, Group_AuxPorts, "Powder Hopper2 enable port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_6, Group_AuxPorts, "Nozzle gas purge port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_7, Group_AuxPorts, "Powder Feedrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_8, Group_AuxPorts, "Carrier Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
-    { Setting_UserDefined_9, Group_AuxPorts, "Nozzle Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_0, Group_Plasma, "Laser Pilot port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_1, Group_Plasma, "Laser Shutter port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_2, Group_Plasma, "Laser Threshold port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_3, Group_Plasma, "Laser error reset port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_4, Group_Plasma, "Powder Hopper1 enable port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_5, Group_Plasma, "Powder Hopper2 enable port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_6, Group_Plasma, "Nozzle gas purge port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_7, Group_Plasma, "Powder Feedrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_8, Group_Plasma, "Carrier Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_UserDefined_9, Group_Plasma, "Nozzle Gas Flowrate port", NULL, Format_Decimal, "-#0", "-1", a_out.port_maxs, Setting_NonCoreFn, set_float, get_float, is_setting_available, { .reboot_required = On } },
+    { Setting_LinearSpindle1Piece1, Group_Plasma, "PWM linear, Powder Feedrate", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
+    { Setting_LinearSpindle1Piece2, Group_Plasma, "PWM linear, Carrier Gas Flowrate", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL },
+    { Setting_LinearSpindle1Piece3, Group_Plasma, "PWM linear, Nozzle Gas Flowrate", NULL, Format_String, "x(39)", NULL, "39", Setting_NonCoreFn, set_linear_piece, get_linear_piece, NULL }
 };
 
 static const setting_descr_t ldm_settings_descr[] = {
@@ -557,6 +607,9 @@ static const setting_descr_t ldm_settings_descr[] = {
     { Setting_UserDefined_7, "Aux output port number to use for powder feedrate." },
     { Setting_UserDefined_8, "Aux output port number to use for carrier gas flowrate." },
     { Setting_UserDefined_9, "Aux output port number to use for nozzle gas flowrate." },
+    { Setting_LinearSpindle1Piece1, "Comma separated list of values: OFFSET, SLOPE, set to blank to disable." },
+    { Setting_LinearSpindle1Piece2, "Comma separated list of values: OFFSET, SLOPE, set to blank to disable." },
+    { Setting_LinearSpindle1Piece3, "Comma separated list of values: OFFSET, SLOPE, set to blank to disable." }
 };
 
 // Write settings to non volatile storage (NVS).
@@ -657,6 +710,10 @@ static void ldm_settings_load (void)
     if(ok || n_signals)
         ldm_setup();
 
+        ldm_setting.blc_pwm[0] = (pwm_mxb_t){ .offset = 0.0f, .slope = 0.0f }; //PFR
+        ldm_setting.blc_pwm[1] = (pwm_mxb_t){ .offset = 0.0f, .slope = 0.0f }; //CGas
+        ldm_setting.blc_pwm[2] = (pwm_mxb_t){ .offset = 0.0f, .slope = 0.0f }; //NGas
+
     if(failed)
         task_run_on_startup(report_warning, "LDM plugin: configured port number(s) not available");
 }
@@ -666,7 +723,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt) {
-        report_plugin("LDM-Fans", "0.06");
+        report_plugin("LDM-Fans", "0.07");
         hal.stream.write("[LDM:");
         hal.stream.write(uitoa(n_signals));
         hal.stream.write("]" ASCII_EOL);
@@ -676,6 +733,8 @@ static void onReportOptions (bool newopt)
 void fans_init (void)
 {
     static setting_details_t setting_details = {
+        .groups = plasma_groups,
+        .n_groups = sizeof(plasma_groups) / sizeof(setting_group_detail_t),
         .settings = ldm_settings,
         .n_settings = sizeof(ldm_settings) / sizeof(setting_detail_t),
         .descriptions = ldm_settings_descr,
