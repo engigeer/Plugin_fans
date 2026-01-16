@@ -557,7 +557,7 @@ static status_code_t set_linear_piece (setting_id_t id, char *svalue)
     if(*svalue == '\0' || (svalue[0] == '0' && svalue[1] == '\0')) {
         ldm_setting.blc_pwm[idx].offset = 0.0f;
         ldm_setting.blc_pwm[idx].slope = 1.0f;
-    } else if(sscanf(svalue, "%f,%f,%f", &offset, &slope) == 2) {
+    } else if(sscanf(svalue, "%f,%f", &offset, &slope) == 2) {
         ldm_setting.blc_pwm[idx].offset = offset;
         ldm_setting.blc_pwm[idx].slope = slope;
     } else
@@ -575,7 +575,7 @@ static char *get_linear_piece (setting_id_t id)
     if(isnan(ldm_setting.blc_pwm[idx].offset))
         *buf = '\0';
     else
-        snprintf(buf, sizeof(buf), "%g,%g,%g", ldm_setting.blc_pwm[idx].offset, ldm_setting.blc_pwm[idx].slope);
+        snprintf(buf, sizeof(buf), "%g,%g", ldm_setting.blc_pwm[idx].offset, ldm_setting.blc_pwm[idx].slope);
 
     return buf;
 }
@@ -707,13 +707,13 @@ static void ldm_settings_load (void)
         }
     } while(idx);
   
-    if(ok || n_signals)
+    if(ok || n_signals) {
         ldm_setup();
 
-        ldm_setting.blc_pwm[0] = (pwm_mxb_t){ .offset = 0.0f, .slope = 0.0f }; //PFR
-        ldm_setting.blc_pwm[1] = (pwm_mxb_t){ .offset = 0.0f, .slope = 0.0f }; //CGas
-        ldm_setting.blc_pwm[2] = (pwm_mxb_t){ .offset = 0.0f, .slope = 0.0f }; //NGas
-
+        ldm_setting.blc_pwm[0] = (pwm_mxb_t){ .offset = 0.0f, .slope = 1.0f }; //PFR
+        ldm_setting.blc_pwm[1] = (pwm_mxb_t){ .offset = 0.0f, .slope = 1.0f }; //CGas
+        ldm_setting.blc_pwm[2] = (pwm_mxb_t){ .offset = 0.0f, .slope = 1.0f }; //NGas
+    }
     if(failed)
         task_run_on_startup(report_warning, "LDM plugin: configured port number(s) not available");
 }
