@@ -266,11 +266,13 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
             // delay_sec(1.0f, DelayMode_Dwell);
             // ldm_set_state(NozzlePurge, On);
 
-            ldm_set_state(Hopper1Enable, Off);
-            ldm_set_state(Hopper2Enable, Off);
+            //ldm_set_state(Hopper1Enable, Off);
+            //ldm_set_state(Hopper2Enable, Off);
             
-            delay_sec(0.1f, DelayMode_Dwell);
+            //delay_sec(0.5f, DelayMode_Dwell);
             ldm_set_state(NozzlePurge, !ldm_get_state(NozzlePurge));
+            //delay_sec(0.5f, DelayMode_Dwell);
+            //ldm_set_state(Hopper1Enable, On)
 
             // delay_sec(10.f, DelayMode_Dwell);
             // ldm_set_state(NozzlePurge, Off);
