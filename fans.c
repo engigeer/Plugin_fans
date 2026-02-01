@@ -631,6 +631,10 @@ static void ldm_settings_restore (void)
         ldm_setting.port[idx] = d_out.get_next(&d_out, ldm_setting.port[idx], signal_names[idx], (pin_cap_t){});
     } while(idx);
 
+    //ldm_setting.powder_feedrate_port = -1;
+    //ldm_setting.carriergas_flowrate_port = -1;
+    //ldm_setting.nozzlegas_flowrate_port = -1;
+
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&ldm_setting, sizeof(ldm_settings_t), true);
 }
 
