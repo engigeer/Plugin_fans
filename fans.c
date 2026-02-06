@@ -185,7 +185,7 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
                 state = Status_GcodeValueWordMissing;
             else if(gc_block->values.r < 0.0f || gc_block->values.r > pfr_maxval){
                 state = Status_GcodeValueOutOfRange;
-                sys.report.all = On;
+                report_add_realtime(Report_All);
             }
             gc_block->words.r = Off;
             break;
@@ -194,7 +194,7 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
                 state = Status_GcodeValueWordMissing;
             else if(gc_block->values.r < 0.0f || gc_block->values.r > cgas_maxval){
                 state = Status_GcodeValueOutOfRange;
-                sys.report.all = On;
+                report_add_realtime(Report_All);
             }
             gc_block->words.r = Off;
             break;
@@ -203,7 +203,7 @@ static status_code_t userMCodeValidate (parser_block_t *gc_block)
                 state = Status_GcodeValueWordMissing;
             else if(gc_block->values.r < 0.0f || gc_block->values.r > ngas_maxval){
                 state = Status_GcodeValueOutOfRange;
-                sys.report.all = On;
+                report_add_realtime(Report_All);
             }
             gc_block->words.r = Off;
             break;
@@ -378,7 +378,7 @@ void ldm_set_state (uint8_t signal, bool on)
             bit_false(signals_on, bit(signal));
         }
 
-        sys.report.fan = On;
+        report_add_realtime(Report_Fan);
         ioport_digital_out(signals.port[signal], on);
     }
 }
