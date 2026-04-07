@@ -662,8 +662,10 @@ static void ldm_settings_load (void)
     carriergas_flowrate_port = ldm_setting.carriergas_flowrate_port;
     nozzlegas_flowrate_port = ldm_setting.nozzlegas_flowrate_port;
 
-    if(powder_feedrate_port == IOPORT_UNASSIGNED || (pin = a_out.claim(&a_out, &powder_feedrate_port, "Powder feedrate", (pin_cap_t){}))) {
+    if(powder_feedrate_port == IOPORT_UNASSIGNED) {
         ok = true;
+
+    } else if(pin = a_out.claim(&a_out, &powder_feedrate_port, "Powder feedrate", (pin_cap_t){})) {
         if (pin->pin == 1 || pin->pin == 2){
             config.invert = On;
             pin->config(pin, &config, false);
@@ -675,8 +677,10 @@ static void ldm_settings_load (void)
     else
         failed++;
 
-    if(carriergas_flowrate_port == IOPORT_UNASSIGNED|| (pin = a_out.claim(&a_out, &carriergas_flowrate_port, "Carrier gas flowrate", (pin_cap_t){}))) {
+    if(carriergas_flowrate_port == IOPORT_UNASSIGNED) {
         ok = true;
+
+    } else if (pin = a_out.claim(&a_out, &carriergas_flowrate_port, "Carrier gas flowrate", (pin_cap_t){})) {
         if (pin->pin == 1 || pin->pin == 2){
             config.invert = On;
             pin->config(pin, &config, false);
@@ -688,7 +692,10 @@ static void ldm_settings_load (void)
     else
         failed++;
 
-    if(nozzlegas_flowrate_port == IOPORT_UNASSIGNED|| (pin = a_out.claim(&a_out, &nozzlegas_flowrate_port, "Nozzle gas flowrate", (pin_cap_t){}))) {
+    if(nozzlegas_flowrate_port == IOPORT_UNASSIGNED) {
+        ok = true;
+
+    } else if(pin = a_out.claim(&a_out, &nozzlegas_flowrate_port, "Nozzle gas flowrate", (pin_cap_t){})) {
         ok = true;
         if (pin->pin == 1 || pin->pin == 2){
             config.invert = On;
