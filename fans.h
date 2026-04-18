@@ -24,7 +24,6 @@
 #pragma once
 
 void fans_init (void);
-//bool ldm_get_state (uint8_t signal);
-//void ldm_set_state (uint8_t signal, bool on);
+void ylr_init (void);
 
 /*EOF*/
