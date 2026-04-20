@@ -77,14 +77,14 @@ typedef enum {
 } ylr_signals_t;
 
 typedef enum {
-    LaserErrorReset_Mom = 510,
-    LaserGuide_On = 511,
-    LaserGuide_Off = 512,
-    LaserRemoteKey_On = 513,
-    LaserRemoteKey_Off = 514,
-    LaserMains_Mom = 515,
-    PowderFeedRate = 530,          //R#.#
-    NozzleGasFlowRate = 550,       //R#.#
+    LaserErrorReset_Mom = 89,
+    LaserGuide_On = 41,
+    LaserGuide_Off = 42,
+    LaserRemoteKey_On = 31,
+    LaserRemoteKey_Off = 32,
+    LaserMains_Mom = 88,
+    PowderFeedRate = 17,           //R#.#
+    NozzleGasFlowRate = 18 ,       //R#.#
 } ylr_mcode_t;
 
 static const float ngas_maxval = 50.0f;
