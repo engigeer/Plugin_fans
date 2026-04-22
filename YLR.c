@@ -83,8 +83,8 @@ typedef enum {
     LaserRemoteKey_On = 31,
     LaserRemoteKey_Off = 32,
     LaserMains_Mom = 88,
-    PowderFeedRate = 17,           //R#.#
-    NozzleGasFlowRate = 18 ,       //R#.#
+    PowderFeedRate = 18,           //R#.#
+    NozzleGasFlowRate = 17 ,       //R#.#
 } ylr_mcode_t;
 
 static const float ngas_maxval = 50.0f;
@@ -198,7 +198,7 @@ static void userMCodeExecute (uint_fast16_t state, parser_block_t *gc_block)
             ylr_set_state(LaserErrorReset, Off);
             break;
         case PowderFeedRate:
-            pfr_value = floorf((float)gc_block->values.r * 100)/100;
+            pfr_value = floorf((float)gc_block->values.r * 10)/10;
             set_powder_feedrate(pfr_value);
             break;
         case NozzleGasFlowRate:
@@ -241,7 +241,7 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
 
     if(pfr_prev != pfr_value || report.all) {
         strcat(buf, "|PFR:");
-        strcat(buf, ftoa(pfr_value, 2));
+        strcat(buf, ftoa(pfr_value, 1));
         pfr_prev = pfr_value;
     }
 
