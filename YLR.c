@@ -281,7 +281,8 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
         stream_write(buf);
 
     // Add timestamp to MPG report for ML data logging
-    mpgTimestamp(mpg_stream->write, report);
+    if (stream_write == mpg_stream->write)
+        mpgTimestamp(stream_write, report);
 
     if(on_realtime_report)
         on_realtime_report(stream_write, report);
@@ -352,9 +353,6 @@ static void ylr_setup (void)
 
     driver_reset = hal.driver_reset;
     hal.driver_reset = driverReset;
-
-    on_mpg_registered = grbl.on_mpg_registered;
-    grbl.on_mpg_registered = onMPGRegistered;
 
     on_realtime_report = grbl.on_realtime_report;
     grbl.on_realtime_report = onRealtimeReport;
@@ -633,6 +631,9 @@ void ylr_init (void)
 
     } else
         task_run_on_startup(report_warning, "YLR plugin failed to initialize!");
+
+    on_mpg_registered = grbl.on_mpg_registered;
+    grbl.on_mpg_registered = onMPGRegistered;
 }
 
 #endif //FANS_ENABLE == 2  // YLR
