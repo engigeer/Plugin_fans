@@ -239,22 +239,18 @@ void onMPGRegistered (io_stream_t *stream, bool tx_capable)
 
 static void mpgTimestamp (stream_write_ptr stream_write, report_tracking_flags_t report)
 {
-    char buf[30] = "";
-
     struct timeval tv;
-    struct tm *time;
-    uint32_t ts_millis;
-    if(!!hal.rtc.get_time(&tv)) {
-        hal.rtc.get_time(&tv);
-        localtime_r(&tv.tv_sec, time);
+    struct tm tm;
 
-        sprintf(buf, "|TS:%d:%02d:%02d.%03d", time->tm_hour, time->tm_min, time->tm_sec, tv.tv_usec / 1000);
-    } else
-        *buf = '\0';
+    if(hal.rtc.get_time && hal.rtc.get_time(&tv) && localtime_r(&tv.tv_sec, &tm)) {
 
-    if(*buf)
-        stream_write(buf); //TODO: direct only to MPG
+        char buf[30];
 
+        snprintf(buf, sizeof(buf), "|TS:%d:%02d:%02d.%03d",
+                  tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(tv.tv_usec / 1000));
+
+        stream_write(buf);
+    }
 }
 
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report)
