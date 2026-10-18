@@ -98,7 +98,9 @@ static user_mcode_ptrs_t user_mcode;
 static ylr_settings_t ylr_setting, signals;
 static io_port_cfg_t d_out, a_out;
 static nvs_address_t nvs_address;
+static io_stream_t *mpg_stream;
 
+static on_mpg_registered_ptr on_mpg_registered;
 static on_report_options_ptr on_report_options;
 static on_realtime_report_ptr on_realtime_report;
 static on_program_completed_ptr on_program_completed;
@@ -227,6 +229,34 @@ static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
         on_program_completed(program_flow, check_mode);
 }
 
+void onMPGRegistered (io_stream_t *stream, bool tx_capable)
+{
+    mpg_stream = stream;
+
+    if(on_mpg_registered)
+        on_mpg_registered(stream, tx_capable);
+}
+
+static void mpgTimestamp (stream_write_ptr stream_write, report_tracking_flags_t report)
+{
+    char buf[30] = "";
+
+    struct timeval tv;
+    struct tm *time;
+    uint32_t ts_millis;
+    if(!!hal.rtc.get_time(&tv)) {
+        hal.rtc.get_time(&tv);
+        localtime_r(&tv.tv_sec, time);
+
+        sprintf(buf, "|TS:%d:%02d:%02d.%03d", time->tm_hour, time->tm_min, time->tm_sec, tv.tv_usec / 1000);
+    } else
+        *buf = '\0';
+
+    if(*buf)
+        stream_write(buf); //TODO: direct only to MPG
+
+}
+
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report)
 {
     static float pfr_prev = 0.0f;
@@ -253,6 +283,9 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
 
     if(*buf != '\0')
         stream_write(buf);
+
+    // Add timestamp to MPG report for ML data logging
+    mpgTimestamp(mpg_stream->write, report);
 
     if(on_realtime_report)
         on_realtime_report(stream_write, report);
@@ -323,6 +356,9 @@ static void ylr_setup (void)
 
     driver_reset = hal.driver_reset;
     hal.driver_reset = driverReset;
+
+    on_mpg_registered = grbl.on_mpg_registered;
+    grbl.on_mpg_registered = onMPGRegistered;
 
     on_realtime_report = grbl.on_realtime_report;
     grbl.on_realtime_report = onRealtimeReport;
